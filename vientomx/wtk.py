@@ -458,12 +458,15 @@ def download_wtk_mexico(lat: float, lon: float, start_year: int = 2007, end_year
         df.index = pd.DatetimeIndex(df.index, tz="UTC") if df.index.tz is None else df.index
         return df
 
-    wind = pd.concat([frames[y] if y in frames else _read(cpath(y, False)) for y in years]).sort_index()
+    # se seleccionan las columnas explícitamente: la caché de versiones anteriores guardaba todo junto
+    wcols, tcols = list(wind_vars.values()), list(tp_vars.values())
+    wind = pd.concat([frames[y] if y in frames else _read(cpath(y, False))[wcols] for y in years]).sort_index()
     tp = frames.get(("tp", tp_year))
     if tp is None:
         tp = _read(cpath(tp_year, True))
+    tp = tp[[c for c in tcols if c in tp]]
     df = wind.join(tp, how="left")
-    df = df[~df.index.duplicated()].dropna(how="all", subset=list(wind_vars.values()))
+    df = df[~df.index.duplicated()].dropna(how="all", subset=wcols)
     if progress:
         progress(1.0, "WIND Toolkit descargado")
     glat, glon, gelev = meta["lat"], meta["lon"], meta["elevation"]

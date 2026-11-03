@@ -270,6 +270,13 @@ def test_wtk_reader(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         wtk.download_wtk_mexico(25.6, -100.6, 2005, 2006, 85, gid=17)
 
+    # caché de la versión anterior: el archivo "_tp" del primer año traía también las columnas de viento
+    old = m.df.copy()
+    old.to_csv(tmp_path / "cache" / "wtk_mexico_23_2010_80_100_tp.csv.gz")
+    m5 = wtk.download_wtk_mexico(25.6, -100.6, 2010, 2010, 85, gid=23, src_for_year=lambda y: str(f))
+    assert sorted(m5.df.columns) == ["ps", "t2m", "wd_100", "ws_100", "ws_80"]
+    assert m5.df["ws_100"].mean() == pytest.approx(6.23, abs=0.01)
+
     # el índice de chunks del año de referencia (2007) se reutiliza en los demás años sin buscar en el B-tree
     f07, f09 = tmp_path / "wtk_2007.h5", tmp_path / "wtk_2009.h5"
     _fake_wtk_file(f07)
