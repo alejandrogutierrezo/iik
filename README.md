@@ -93,14 +93,23 @@ Datos de turbinas © colaboradores de OpenStreetMap, licencia ODbL.
 
 | Insumo | Fuente | Notas para México |
 |---|---|---|
-| Viento horario | ERA5 vía Open-Meteo | 0.25°, 1940–presente, 10 y 100 m. Recomendada. |
-| Viento horario | NASA POWER (MERRA-2) | 2001–presente, 10 y 50 m. Útil como segunda opinión. |
-| Viento horario | ERA5 Copernicus CDS | Igual a ERA5, descarga oficial (lenta). |
-| Viento medio 250 m | Global Wind Atlas 3 | Para calibrar el reanálisis (campo "velocidad objetivo"). |
+| Viento horario | ERA5 vía Open-Meteo | 0.25° (~28 km), 1940–presente, 10 y 100 m. Bueno en terreno plano. |
+| Viento horario | **NREL WIND Toolkit México** | Modelo WRF de mesoescala, ~2 km, 2007–2014, 10–200 m, AWS Open Data sin registro. **Recomendada en sierras, cañones y pasos de montaña.** Se descargan solo los bloques del punto (~40 MB/año). |
+| Viento horario | NASA POWER (MERRA-2) | ~50 km, 2001–presente, 10 y 50 m. Segunda opinión. |
+| Viento horario | ERA5 Copernicus CDS | El mismo dato que ERA5 vía Open-Meteo, descarga oficial (lenta). |
+| Viento medio 250 m | Global Wind Atlas | Calibra la media de la serie a 10/50/100/150/200 m: botón automático (GeoTIFF nacional, lectura parcial o descarga única a caché) o GeoTIFF subido. |
 | Elevación | Copernicus DEM GLO-30 | Automático. Alternativa: INEGI CEM 3.0 (15 m) como GeoTIFF. |
 | Cobertura de suelo | ESA WorldCover 2021 | Automático, tabla z0 editable. Alternativa: INEGI USV Serie VII. |
 
 Los datos descargados se guardan en caché en `~/.vientomx/cache`.
+
+**Terreno complejo.** Los reanálisis globales (ERA5, MERRA-2) promedian celdas de
+25–50 km y no ven el encauzamiento del viento en cañones y pasos de montaña. En el
+parque eólico Santa Catarina (N.L.), por ejemplo, ERA5 da 3.1 m/s a 85 m, mientras
+que el WIND Toolkit da 5.4–7.9 m/s (2010, 100 m) en los puntos de malla a menos de 3 km, según su
+posición y elevación. En esos sitios use el WIND Toolkit, calibre con el Global Wind
+Atlas o, mejor, con una medición; la app avisa cuando el RIX medio supera 5 % y la
+fuente es un reanálisis sin calibrar.
 
 ## Librería de curvas de potencia: fuentes sugeridas
 

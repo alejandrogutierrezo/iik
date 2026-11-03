@@ -16,7 +16,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vientomx import aep, climate, layout, met, osm, report, terrain, turbines  # noqa: E402
+from vientomx import aep, climate, gwa, layout, met, osm, report, terrain, turbines, wtk  # noqa: E402
 
 st.set_page_config(page_title="VientoMX · Evaluación de recurso eólico", page_icon="🌬️", layout="wide")
 
@@ -24,7 +24,8 @@ SS = st.session_state
 for k, v in dict(layout=None, met=None, met_reanalysis=None, ref_latlon=None, grid=None, turbine=None,
                  hub_height=100.0, results=None, cfg=None, calib=None, mcp_info=None,
                  osm_turbines=None, map_center=None, map_zoom=None, map_bounds=None, move_sel=None,
-                 prev_obj_click=None, prev_map_click=None, layout_ver=0).items():
+                 prev_obj_click=None, prev_map_click=None, layout_ver=0, calib_h=None, calib_ref=None,
+                 wtk_points=None, gwa_info=None).items():
     SS.setdefault(k, v)
 
 # Longitudes fuera de [-180, 180) (p. ej. de clics en otra "copia" del mundo en el mapa) rompen las descargas
@@ -335,6 +336,7 @@ with tabs[1]:
         lat0, lon0 = float(SS.layout.lat.mean()), float(SS.layout.lon.mean())
         src = st.selectbox("Fuente de datos", [
             "ERA5 vía Open-Meteo (sin registro, recomendado)",
+            "NREL WIND Toolkit México — WRF ~2 km, 2007–2014 (sin registro; mejor en montaña)",
             "NASA POWER / MERRA-2 (sin registro)",
             "ERA5 desde Copernicus CDS (requiere API key)",
             "Medición propia: torre o LiDAR (CSV)",
@@ -344,11 +346,60 @@ with tabs[1]:
             plat = st.number_input("Latitud del punto", value=round(lat0, 4), format="%.4f")
         with c2:
             plon = st.number_input("Longitud del punto", value=round(lon0, 4), format="%.4f")
+        is_wtk = "WIND Toolkit" in src
         if not src.startswith("Medición"):
             with c3:
-                y0 = st.number_input("Año inicial", 1981 if "NASA" not in src else 2001, 2025, 2005)
+                if is_wtk:
+                    y0 = st.number_input("Año inicial", 2007, 2014, 2007)
+                else:
+                    y0 = st.number_input("Año inicial", 1981 if "NASA" not in src else 2001, 2025, 2005)
             with c4:
-                y1 = st.number_input("Año final", 1981, 2025, 2024)
+                if is_wtk:
+                    y1 = st.number_input("Año final", 2007, 2014, 2014)
+                else:
+                    y1 = st.number_input("Año final", 1981, 2025, 2024)
+            wtk_gid = None
+            if is_wtk:
+                st.caption("Modelo de mesoescala WRF (3Tier/Vaisala para el NREL), malla de ~2 km, horario, 10–200 m. "
+                           "Resuelve mucho mejor que ERA5 los pasos de montaña, cañones y brisas. Se descargan solo los "
+                           "bloques del punto elegido (~40 MB por año; 2014 ~160 MB). Datos: NREL, AWS Open Data.")
+                if st.button("Buscar puntos de malla cercanos"):
+                    with st.spinner("Leyendo la malla del WIND Toolkit…"):
+                        try:
+                            SS.wtk_points = wtk.nearest_points(plat, plon, 9)
+                        except Exception as e:
+                            st.error(f"No se pudo leer el WIND Toolkit: {e}")
+                if SS.wtk_points is not None:
+                    pts = SS.wtk_points.copy()
+                    elev_t = None
+                    if SS.grid is not None and SS.grid.elev is not None:
+                        from pyproj import Transformer as _Tr
+                        _t = _Tr.from_crs(4326, SS.grid.crs, always_xy=True)
+                        _x, _y = _t.transform(SS.layout.lon.to_numpy(), SS.layout.lat.to_numpy())
+                        elev_t = float(np.nanmean(SS.grid.sample(SS.grid.elev, _x, _y)))
+                    best_z = None
+                    if elev_t is not None:  # punto cercano con elevación parecida a las turbinas
+                        best_z = int(np.argmin(pts.dist_km + np.abs(pts.elev_m - elev_t) / 100.0))
+                    labels = [f"{r.gid} · {r.dist_km:.1f} km · elev. modelo {r.elev_m:.0f} m"
+                              + (" · más cercano" if i == 0 else "") + (" · elevación similar" if i == best_z else "")
+                              for i, r in enumerate(pts.itertuples())]
+                    sel = st.selectbox("Punto de malla", labels, index=0,
+                                       help="La malla de 2 km suaviza el relieve: compare la elevación del modelo con "
+                                            "la de sus turbinas" + (f" (≈{elev_t:.0f} m según el DEM)." if elev_t else
+                                                                    " (prepare el terreno en el paso 3 para verla aquí)."))
+                    wtk_gid = int(pts.gid.iloc[labels.index(sel)])
+                    hh = min(wtk.HEIGHTS, key=lambda z: abs(z - float(SS.hub_height)))
+                    if st.button(f"Comparar velocidad media de los {len(pts)} puntos (año 2013, {hh} m, ~30 MB)"):
+                        with st.spinner("Descargando un año de los puntos cercanos…"):
+                            try:
+                                cmp_ = wtk.compare_points(pts.gid.tolist(), 2013, hh)
+                                SS.wtk_points = pts = pts.drop(columns=[c for c in pts if c.startswith("v_media")]
+                                                               ).merge(cmp_, on="gid")
+                            except Exception as e:
+                                st.error(f"No se pudo comparar: {e}")
+                    st.dataframe(pts.round({"lat": 4, "lon": 4, "dist_km": 2}).round(2), hide_index=True, height=230)
+                    st.caption("En terreno complejo, puntos a 2 km pueden diferir más de 1 m/s. Elija el que mejor "
+                               "represente la posición y elevación de las turbinas (o compárelos con una medición).")
             key_cds = None
             if "CDS" in src:
                 key_cds = st.text_input("API key del CDS (o configure ~/.cdsapirc)", type="password")
@@ -357,7 +408,10 @@ with tabs[1]:
             if st.button("Descargar datos", type="primary"):
                 bar = st.progress(0.0, text="Conectando…")
                 try:
-                    if "Open-Meteo" in src:
+                    if is_wtk:
+                        m = wtk.download_wtk_mexico(plat, plon, int(y0), int(y1), float(SS.hub_height), gid=wtk_gid,
+                                                    progress=progress_cb(bar))
+                    elif "Open-Meteo" in src:
                         m = met.download_open_meteo_era5(plat, plon, int(y0), int(y1), progress=progress_cb(bar))
                     elif "NASA" in src:
                         m = met.download_nasa_power(plat, plon, int(y0), int(y1), progress=progress_cb(bar))
@@ -366,6 +420,7 @@ with tabs[1]:
                                                   url="https://cds.climate.copernicus.eu/api" if key_cds else None,
                                                   key=key_cds or None)
                     SS.met, SS.met_reanalysis, SS.ref_latlon, SS.results, SS.calib = m, m, None, None, None
+                    SS.calib_h, SS.calib_ref, SS.gwa_info = None, None, None
                     bar.progress(1.0, text=f"Listo: {len(m.df):,} horas")
                 except Exception as e:
                     st.error(f"Error en la descarga: {e}")
@@ -418,14 +473,64 @@ with tabs[1]:
         hub = float(SS.hub_height)
         st.subheader(f"Análisis a {hub:g} m — {m.source}")
         ts = climate.extrapolate_to_height(m, hub)
-        with st.expander("Calibración opcional a una velocidad media objetivo"):
-            st.caption("Por ejemplo, la velocidad media del Global Wind Atlas (globalwindatlas.info) en el sitio a la "
-                       "altura de buje. El reanálisis suele subestimar el viento en terreno complejo y en el Istmo.")
-            tgt = st.number_input("Velocidad media objetivo [m/s] (0 = sin calibrar)", 0.0, 20.0, float(SS.calib or 0.0))
-            SS.calib = tgt or None
+        if climate.is_coarse_source(m.source):
+            st.info("Esta fuente es un reanálisis de malla gruesa (25–50 km): en sierras, cañones y pasos de montaña "
+                    "suele subestimar mucho el viento. Use el WIND Toolkit (2 km) o calibre con el Global Wind Atlas o "
+                    "una medición.")
+        with st.expander("Calibración a una velocidad media objetivo (Global Wind Atlas o medición)",
+                         expanded=bool(SS.calib)):
+            st.caption("Escala la serie para que su media coincida con un valor de referencia, conservando la forma de la "
+                       "distribución, la rosa y los ciclos. La referencia se toma en el centro del parque y el modelo de "
+                       "flujo calcula las diferencias entre turbinas respecto a ese punto.")
+            c1, c2, c3 = st.columns(3)
+            hopts = sorted(set(gwa.HEIGHTS) | {int(round(hub))})
+            with c1:
+                ch = st.selectbox("Altura del valor objetivo [m]", hopts,
+                                  index=hopts.index(int(SS.calib_h or gwa.nearest_height(hub))))
+            with c2:
+                if st.button("Obtener del Global Wind Atlas", help="Velocidad media a la altura elegida en el centro "
+                                                                   "del parque (resolución 250 m)."):
+                    gh = gwa.nearest_height(ch)
+                    bar = st.progress(0.0, text="Global Wind Atlas…")
+                    try:
+                        latc, lonc = float(SS.layout.lat.mean()), float(SS.layout.lon.mean())
+                        pts_lat = np.r_[latc, SS.layout.lat.to_numpy(float)]
+                        pts_lon = np.r_[lonc, SS.layout.lon.to_numpy(float)]
+                        v = gwa.fetch_mean_speed(pts_lat, pts_lon, gh, progress=progress_cb(bar))
+                        SS.gwa_info = {"height": gh, "center": float(v[0]), "turbines": v[1:].tolist()}
+                        SS.calib, SS.calib_h, SS.calib_ref, SS.results = float(v[0]), gh, (latc, lonc), None
+                        bar.progress(1.0, text=f"GWA {gh} m en el centro del parque: {v[0]:.2f} m/s")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(str(e))
+                up_gwa = st.file_uploader("…o subir GeoTIFF del GWA (velocidad media)", type=["tif", "tiff"],
+                                          key="gwa_up")
+                if up_gwa is not None and SS.get("gwa_file") != up_gwa.file_id:
+                    try:
+                        latc, lonc = float(SS.layout.lat.mean()), float(SS.layout.lon.mean())
+                        v = gwa.sample_raster(up_gwa.getvalue(), np.r_[latc, SS.layout.lat.to_numpy(float)],
+                                              np.r_[lonc, SS.layout.lon.to_numpy(float)])
+                        if not np.isfinite(v[0]):
+                            raise ValueError("el archivo no cubre el centro del parque")
+                        SS.gwa_file = up_gwa.file_id
+                        SS.gwa_info = {"height": int(ch), "center": float(v[0]), "turbines": v[1:].tolist()}
+                        SS.calib, SS.calib_h, SS.calib_ref, SS.results = float(v[0]), int(ch), (latc, lonc), None
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"No se pudo leer el GeoTIFF: {e}")
+            with c3:
+                tgt = st.number_input("Velocidad media objetivo [m/s] (0 = sin calibrar)", 0.0, 20.0,
+                                      float(SS.calib or 0.0), 0.01, key=f"calib_in_{SS.calib}_{SS.calib_h}")
+            if (tgt or None) != SS.calib or (tgt and int(ch) != int(SS.calib_h or ch)):
+                SS.calib, SS.calib_h, SS.results = (tgt or None), int(ch), None
+                SS.calib_ref = SS.calib_ref or (float(SS.layout.lat.mean()), float(SS.layout.lon.mean()))
+            if SS.gwa_info:
+                gi = SS.gwa_info
+                st.caption(f"Global Wind Atlas a {gi['height']} m: centro del parque {gi['center']:.2f} m/s; turbinas "
+                           f"{np.nanmin(gi['turbines']):.2f}–{np.nanmax(gi['turbines']):.2f} m/s.")
         if SS.calib:
-            ts, f = climate.calibrate_to_mean(ts, SS.calib)
-            st.caption(f"Factor de calibración aplicado: {f:.3f}")
+            ts, f = climate.calibrate_series(m, ts, SS.calib, SS.calib_h or hub)
+            st.caption(f"Calibrado a {SS.calib:.2f} m/s a {SS.calib_h or hub:g} m · factor aplicado: {f:.3f}")
         k1, k2, k3, k4 = st.columns(4)
         A, kk = climate.weibull_fit(ts.ws)
         k1.metric("Velocidad media", f"{ts.ws.mean():.2f} m/s")
@@ -682,11 +787,13 @@ with tabs[4]:
         site_elev = float(np.mean(g.sample(g.elev, _x, _y)))
         rho = climate.air_density(SS.met, site_elev, cfg.hub_height) if rho_auto else rho_man
         ts = climate.extrapolate_to_height(SS.met, cfg.hub_height)
+        ref = SS.ref_latlon
         if SS.calib:
-            ts, _ = climate.calibrate_to_mean(ts, SS.calib)
+            ts, _ = climate.calibrate_series(SS.met, ts, SS.calib, SS.calib_h or cfg.hub_height)
+            ref = ref or SS.calib_ref
         bar = st.progress(0.0, text="Iniciando…")
         try:
-            SS.results = aep.run_aep(SS.layout, ts, SS.turbine, cfg, g, rho, SS.ref_latlon, progress=progress_cb(bar))
+            SS.results = aep.run_aep(SS.layout, ts, SS.turbine, cfg, g, rho, ref, progress=progress_cb(bar))
             SS.cfg = cfg
             st.success("Cálculo terminado. Vea la pestaña ⑥ Resultados.")
         except Exception as e:
@@ -700,6 +807,8 @@ with tabs[5]:
         st.info("Ejecute la simulación (paso 5).")
     else:
         s = r.summary
+        for w in aep.reliability_warnings(s, SS.met.source if SS.met is not None else "", bool(SS.calib)):
+            st.warning(w)
         k = st.columns(6)
         k[0].metric("Capacidad", f"{s['Capacidad instalada [MW]']:.1f} MW")
         k[1].metric("AEP neta P50", f"{s['AEP neta P50 [GWh]']:.1f} GWh")
@@ -773,7 +882,7 @@ with tabs[5]:
             c1.dataframe(r.losses.round(2), hide_index=True)
             c2.dataframe(r.uncertainty.round(2), hide_index=True)
         inputs = {"Fuente de viento": SS.met.source, "Punto de referencia": f"{SS.met.lat}, {SS.met.lon}",
-                  "Calibración (m/s)": SS.calib or "no", "Terreno": SS.grid.meta.get("dem_source") if SS.grid else "plano",
+                  "Calibración (m/s)": f"{SS.calib:.2f} a {SS.calib_h or SS.cfg.hub_height:g} m" if SS.calib else "no", "Terreno": SS.grid.meta.get("dem_source") if SS.grid else "plano",
                   "Rugosidad": SS.grid.meta.get("z0_source") if SS.grid else "-", "Modelo de estelas": SS.cfg.wake_model,
                   "k": SS.cfg.wake_k, "TI": SS.cfg.ti, "Altura de buje": SS.cfg.hub_height}
         c1, c2 = st.columns(2)

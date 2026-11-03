@@ -216,3 +216,89 @@ def test_download_errors_are_explained():
         with pytest.raises(met.DownloadError, match="models is invalid"):
             met.download_open_meteo_era5(25.68, -100.64, 2005, 2005, use_cache=False)
     assert g.call_count == 1  # un error de parámetros no se reintenta
+
+
+def _fake_wtk_file(path, n_sites=50, nt=8760):
+    import h5py
+
+    rng = np.random.default_rng(1)
+    lat = 25.6 + (np.arange(n_sites) // 10) * 0.018
+    lon = -100.7 + (np.arange(n_sites) % 10) * 0.02
+    with h5py.File(path, "w") as h:
+        h["coordinates"] = np.column_stack([lat, lon]).astype("f4")
+        meta = np.zeros(n_sites, dtype=[("latitude", "<f4"), ("longitude", "<f4"), ("county", "S38"),
+                                         ("elevation", "<i2")])
+        meta["latitude"], meta["longitude"], meta["county"] = lat, lon, b"Santa Catarina"
+        meta["elevation"] = 1200 + np.arange(n_sites) * 10
+        h["meta"] = meta
+        h["time_index"] = np.array(pd.date_range("2010-01-01", periods=nt, freq="h").strftime("%Y-%m-%d %H:%M:%S"),
+                                   dtype="S20")
+        base = 6 + 2 * np.sin(np.arange(nt) / 24 * 2 * np.pi)[:, None] + 0.01 * np.arange(n_sites)[None, :]
+        for hh, fac in ((80, 0.97), (100, 1.0)):
+            d = h.create_dataset(f"windspeed_{hh}m", data=np.round(base * fac * 100).astype("<u2"), chunks=(1344, 16))
+            d.attrs["scale_factor"], d.attrs["fill_value"] = 100.0, 65535
+            d = h.create_dataset(f"winddirection_{hh}m", data=np.full((nt, n_sites), 9000, "<u2"), chunks=(1344, 16))
+            d.attrs["scale_factor"], d.attrs["fill_value"] = 100.0, 65535
+        d = h.create_dataset("temperature_2m", data=np.full((nt, n_sites), 1500, "<i2"), chunks=(1344, 16))
+        d.attrs["scale_factor"], d.attrs["fill_value"] = 100.0, 32767
+        d = h.create_dataset("pressure_0m", data=np.full((nt, n_sites), 8700, "<u2"), chunks=(1344, 16))
+        d.attrs["scale_factor"], d.attrs["fill_value"] = 0.1, 65535
+
+
+def test_wtk_reader(tmp_path, monkeypatch):
+    from vientomx import wtk
+
+    monkeypatch.setattr(wtk, "CACHE_DIR", tmp_path / "cache")
+    f = tmp_path / "wtk_2010.h5"
+    _fake_wtk_file(f)
+    pts = wtk.nearest_points(25.618, -100.62, 4, src=str(f))
+    assert pts.gid.iloc[0] == 14 and pts.dist_km.iloc[0] < 0.1 and pts.elev_m.iloc[0] == 1340
+    assert wtk.heights_for_hub(85) == (80, 100) and wtk.heights_for_hub(100) == (80, 100)
+    m = wtk.download_wtk_mexico(25.618, -100.62, 2010, 2010, hub_height=85, gid=17, src_for_year=lambda y: str(f))
+    assert m.heights == [80, 100] and len(m.df) == 8760
+    assert m.df["ws_100"].mean() == pytest.approx(6 + 0.17, abs=0.01)
+    assert m.df["wd_100"].iloc[0] == 90 and m.df["t2m"].iloc[0] == 15 and m.df["ps"].iloc[0] == pytest.approx(870)
+    assert m.elevation == pytest.approx(1267, abs=5) and "WIND Toolkit" in m.source  # altura de p = 870 hPa
+    hub = climate.extrapolate_to_height(m, 85)
+    assert m.df.ws_80.mean() < hub.ws.mean() < m.df.ws_100.mean()
+    assert 0.9 < climate.air_density(m, 1300, 85) < 1.1
+    cmp_ = wtk.compare_points([0, 17, 33], 2010, 100, src=str(f))
+    assert cmp_.iloc[:, 1].tolist() == pytest.approx([6.0, 6.17, 6.33], abs=0.01)
+    # segunda llamada: desde caché, sin abrir el archivo
+    m2 = wtk.download_wtk_mexico(25.6, -100.6, 2010, 2010, 85, gid=17, src_for_year=lambda y: "/no/existe.h5")
+    assert m2.df["ws_80"].equals(m.df["ws_80"])
+    with pytest.raises(ValueError):
+        wtk.download_wtk_mexico(25.6, -100.6, 2005, 2006, 85, gid=17)
+
+
+def test_gwa_sampling_and_calibration(tmp_path, monkeypatch):
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from vientomx import gwa
+
+    data = np.full((40, 40), 7.5, "f4")
+    data[:20, :] = 6.0  # mitad norte más lenta
+    p = tmp_path / "gwa.tif"
+    with rasterio.open(p, "w", driver="GTiff", width=40, height=40, count=1, dtype="float32", crs="EPSG:4326",
+                       transform=from_origin(-100.75, 25.75, 0.0025, 0.0025), nodata=-9999) as ds:
+        ds.write(data, 1)
+    v = gwa.sample_raster(str(p), [25.74, 25.68, 30.0], [-100.70, -100.70, -100.70])
+    assert v[0] == pytest.approx(6.0) and v[1] == pytest.approx(7.5) and np.isnan(v[2])
+    assert gwa.sample_raster(p.read_bytes(), [25.68], [-100.7])[0] == pytest.approx(7.5)  # archivo subido
+    assert gwa.nearest_height(85) == 100 and gwa.nearest_height(60) == 50
+    # caché local del GeoTIFF nacional -> no se toca la red
+    monkeypatch.setattr(gwa, "CACHE_DIR", tmp_path)
+    (tmp_path / "gwa_mex_ws100.tif").write_bytes(p.read_bytes())
+    assert gwa.fetch_mean_speed([25.68], [-100.7], 100)[0] == pytest.approx(7.5)
+
+    m = met.synthetic_met(seed=3)
+    hub = climate.extrapolate_to_height(m, 110)
+    cal, f = climate.calibrate_series(m, hub, 7.0, 100)
+    assert climate.extrapolate_to_height(m, 100).ws.mean() * f == pytest.approx(7.0)
+    assert cal.ws.mean() == pytest.approx(hub.ws.mean() * f)
+    assert climate.is_coarse_source("ERA5 (Open-Meteo, era5)") and not climate.is_coarse_source("NREL WIND Toolkit")
+    assert not climate.is_coarse_source("MCP medición + ERA5")
+    w = aep.reliability_warnings({"RIX medio [%]": 21, "Factor de planta neto [%]": 4.7}, "ERA5 (Open-Meteo)", False)
+    assert len(w) == 2 and "subestimada" in w[0]
+    assert aep.reliability_warnings({"RIX medio [%]": 1, "Factor de planta neto [%]": 30}, "NREL WIND Toolkit", False) == []

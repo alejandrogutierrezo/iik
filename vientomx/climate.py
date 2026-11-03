@@ -142,6 +142,28 @@ def calibrate_to_mean(ts: pd.DataFrame, target_mean: float) -> tuple[pd.DataFram
     return out, float(f)
 
 
+def calibrate_series(met: MetData, ts_hub: pd.DataFrame, target_mean: float, target_height: float
+                     ) -> tuple[pd.DataFrame, float]:
+    """Escala la serie a buje para que la media **a ``target_height``** sea ``target_mean``.
+
+    El factor se obtiene a la altura del valor objetivo (p. ej. GWA a 100 m) con
+    la misma extrapolación vertical de la serie, y se aplica a la serie a buje."""
+    ref = extrapolate_to_height(met, float(target_height))
+    f = float(target_mean / ref["ws"].mean())
+    out = ts_hub.copy()
+    out["ws"] = out["ws"] * f
+    return out, f
+
+
+COARSE_SOURCES = ("ERA5", "NASA POWER", "MERRA")
+
+
+def is_coarse_source(source: str) -> bool:
+    """True si la fuente es un reanálisis global de malla gruesa (sin medición/MCP ni mesoescala)."""
+    s = source or ""
+    return any(k in s for k in COARSE_SOURCES) and "MCP" not in s and "Medición" not in s
+
+
 def mcp_variance_ratio(measured: pd.DataFrame, reference: pd.DataFrame, by_sector=True,
                        n_sectors=12) -> tuple[pd.DataFrame, pd.DataFrame]:
     """MCP (Measure-Correlate-Predict) por razón de varianzas.
