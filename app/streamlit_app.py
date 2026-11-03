@@ -99,7 +99,7 @@ def _map_editor():
         SS.move_sel = None
 
     # ---- capa de turbinas OSM
-    b1, b2, b3 = st.columns([2, 2, 3])
+    b1, b2 = st.columns([2, 3])
     with b1:
         if st.button("🔎 Buscar turbinas de OSM aquí", type="primary"):
             bnd = SS.map_bounds
@@ -118,7 +118,7 @@ def _map_editor():
                     n = len(tur)
                     if n:
                         SS.osm_msg = ("success", f"{n} aerogeneradores encontrados en OSM{note}. Aparecen como "
-                                                 "puntos naranjas: clic en uno para usarlo, o «Usar todas».")
+                                                 "puntos naranjas: clic en uno para usarlo, o «Aceptar las … turbinas».")
                         SS.map_center, SS.map_zoom = _fit(tur.lat, tur.lon)
                     else:
                         txt = "No hay aerogeneradores individuales mapeados en OSM en esta zona" + note + "."
@@ -166,19 +166,25 @@ def _map_editor():
             st.dataframe(osm_df.assign(en_layout=osm_df.osm_id.isin(in_layout)), hide_index=True,
                          column_config={"lat": st.column_config.NumberColumn(format="%.6f"),
                                         "lon": st.column_config.NumberColumn(format="%.6f")})
-    with b2:
-        if pending is not None and len(pending) and st.button(f"Usar todas las de OSM ({len(pending)})"):
+    if pending is not None and len(pending):
+        a1, a2 = st.columns([3, 2])
+        a2.caption("O bien, en modo «➕ Agregar turbina», haga clic sobre cada punto naranja para tomarlas una por una.")
+        if a1.button(f"✅ Aceptar las {len(pending)} turbinas de OSM y agregarlas al layout", type="primary",
+                     use_container_width=True, key="osm_accept_all"):
             new = osm.to_layout(pending)
-            base_df = SS.layout if SS.layout is not None else None
+            base_df = SS.layout
             for r in new.itertuples(index=False):
                 extra = {"osm_id": r.osm_id}
                 if "hub_height" in new and pd.notna(getattr(r, "hub_height", None)):
                     extra["hub_height"] = r.hub_height
                 base_df = layout.add_turbine(base_df, r.lat, r.lon, r.id, **extra)
-            SS.layout, SS.results = base_df, None
+            SS.layout, SS.results, SS.move_sel = base_df, None, None
             SS.layout_ver += 1
+            SS.osm_msg = ("success", f"{len(new)} turbinas de OSM agregadas al layout (ahora {len(base_df)} en total). "
+                                     "Revise o corrija sus coordenadas en la tabla del layout.")
+            SS.map_center, SS.map_zoom = _fit(base_df.lat, base_df.lon)
             st.rerun()
-    with b3:
+    with b2:
         if SS.layout is not None and len(SS.layout) and st.button("Borrar todo el layout"):
             SS.layout, SS.results, SS.move_sel = None, None, None
             SS.layout_ver += 1

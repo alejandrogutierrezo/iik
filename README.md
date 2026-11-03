@@ -81,7 +81,7 @@ En el paso 1, modo **Seleccionar en el mapa**:
   toma la primera respuesta válida; nunca espera más de 40 s. Si la vista es muy
   amplia busca ±12 km alrededor del centro, y si el parque solo está mapeado como
   polígono (`power=plant`) lo avisa. Se toman con un clic, o todas con
-  **Usar todas las de OSM**. Se conservan `ref`/`name` como id, y la altura de
+  **✅ Aceptar las N turbinas de OSM y agregarlas al layout**. Se conservan `ref`/`name` como id, y la altura de
   buje si está etiquetada (`height:hub`); la columna `osm_id` identifica su origen.
 * Con **Agregar / Mover / Borrar turbina** se edita el layout haciendo clic; las
   coordenadas también se pueden corregir en la tabla.
