@@ -180,3 +180,33 @@ def test_osm_parse_and_layout_editing():
     L = layout.remove_turbine(L, 0)
     assert L["id"].tolist() == ["WTG02", "WTG03"]
     assert layout.distance_m(0, 0, 1, 0) == pytest.approx(111195, rel=1e-3)
+
+
+def test_download_errors_are_explained():
+    from unittest import mock
+
+    def resp(status, body, ctype):
+        r = mock.Mock(status_code=status, ok=200 <= status < 300, text=body, headers={"Content-Type": ctype})
+        r.json.side_effect = (lambda: __import__("json").loads(body))
+        return r
+
+    html = resp(200, "<html><head><title>Acceso bloqueado</title></head><body>Firewall de la red</body></html>",
+                "text/html")
+    ok = resp(200, '{"elevation": 700, "hourly": {"time": ["2005-01-01T00:00"], "wind_speed_10m": [3.0], '
+                   '"wind_direction_10m": [90], "wind_speed_100m": [6.0], "wind_direction_100m": [95]}}',
+              "application/json")
+    with mock.patch("vientomx.met.time.sleep"), mock.patch("vientomx.met.requests.get", side_effect=[html, ok]):
+        m = met.download_open_meteo_era5(25.68, -100.64, 2005, 2005, use_cache=False)
+    assert m.df["ws_100"].iloc[0] == 6.0  # se recupera al reintentar
+
+    with mock.patch("vientomx.met.time.sleep"), mock.patch("vientomx.met.requests.get", return_value=html):
+        with pytest.raises(met.DownloadError) as e:
+            met.download_open_meteo_era5(25.68, -100.64, 2005, 2005, use_cache=False)
+    msg = str(e.value)
+    assert "text/html" in msg and "Firewall de la red" in msg and "archive-api.open-meteo.com" in msg
+
+    bad = resp(400, '{"error": true, "reason": "Parameter models is invalid"}', "application/json")
+    with mock.patch("vientomx.met.time.sleep"), mock.patch("vientomx.met.requests.get", return_value=bad) as g:
+        with pytest.raises(met.DownloadError, match="models is invalid"):
+            met.download_open_meteo_era5(25.68, -100.64, 2005, 2005, use_cache=False)
+    assert g.call_count == 1  # un error de parámetros no se reintenta

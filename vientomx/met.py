@@ -22,6 +22,8 @@ import hashlib
 import io
 import json
 import os
+import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -59,6 +61,59 @@ class MetData:
 
     def to_csv(self, path):
         self.df.to_csv(path, index_label="time_utc")
+
+
+class DownloadError(RuntimeError):
+    """Error de descarga con un mensaje legible para el usuario."""
+
+
+def _snippet(text: str, n=300) -> str:
+    t = re.sub(r"<script.*?</script>|<style.*?</style>", " ", text or "", flags=re.S | re.I)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return (t[:n] + "…") if len(t) > n else t
+
+
+def _get_json(url: str, params: dict, source: str, timeout=120, retries=3, backoff=4.0, session=None) -> dict:
+    """GET que devuelve JSON, con reintentos y un error claro si el servidor
+    (o un proxy/firewall de la red) responde algo que no es JSON."""
+    get = (session or requests).get
+    last = ""
+    for attempt in range(retries):
+        wait = backoff * (attempt + 1)
+        try:
+            r = get(url, params=params, headers=UA, timeout=timeout)
+        except requests.RequestException as e:
+            last = f"no se pudo conectar ({type(e).__name__}: {e})"
+            r = None
+        if r is not None:
+            ctype = r.headers.get("Content-Type", "")
+            try:
+                js = r.json()
+            except ValueError:
+                js = None
+            if js is not None and r.ok:
+                return js
+            if js is not None:  # error del API con explicación en JSON (p. ej. Open-Meteo 400/429)
+                reason = js.get("reason") or js.get("message") or js.get("messages") or js.get("detail") or js
+                last = f"HTTP {r.status_code}: {reason}"
+                if r.status_code == 429:  # límite por minuto del servicio gratuito
+                    wait = max(wait, 30.0 * (attempt + 1))
+                if r.status_code < 500 and r.status_code != 429:
+                    break  # parámetros inválidos: reintentar no ayuda
+            else:
+                body = _snippet(r.text)
+                last = (f"HTTP {r.status_code}, se recibió {ctype or 'contenido sin tipo'} en lugar de JSON"
+                        + (f": «{body}»" if body else " (respuesta vacía)"))
+        if attempt < retries - 1:
+            time.sleep(wait)
+    full = requests.Request("GET", url, params=params).prepare().url
+    raise DownloadError(
+        f"{source} no devolvió datos válidos ({last}). "
+        "Si el texto anterior es una página de su red (proxy, firewall, antivirus o portal de acceso), "
+        "pruebe con otra red o configure el proxy (variables HTTPS_PROXY / REQUESTS_CA_BUNDLE). "
+        f"Puede comprobar la conexión abriendo esta dirección en el navegador: {full}"
+    )
 
 
 def _cache_path(key: dict) -> Path:
@@ -130,11 +185,11 @@ def download_open_meteo_era5(lat, lon, start_year, end_year, model="era5", progr
             hourly="wind_speed_10m,wind_speed_100m,wind_direction_10m,wind_direction_100m,temperature_2m,surface_pressure",
             wind_speed_unit="ms", timezone="GMT", models=model,
         )
-        r = requests.get(OPEN_METEO_URL, params=params, headers=UA, timeout=timeout)
-        r.raise_for_status()
-        js = r.json()
+        js = _get_json(OPEN_METEO_URL, params, f"Open-Meteo (año {y})", timeout=timeout)
         if js.get("error"):
-            raise RuntimeError(js.get("reason", "Error de Open-Meteo"))
+            raise DownloadError(f"Open-Meteo (año {y}): {js.get('reason', 'error sin detalle')}")
+        if not js.get("hourly"):
+            raise DownloadError(f"Open-Meteo (año {y}) respondió sin serie horaria: {_snippet(json.dumps(js))}")
         elev = js.get("elevation", elev)
         frames.append(parse_open_meteo(js))
     df = pd.concat(frames).sort_index()
@@ -192,9 +247,10 @@ def download_nasa_power(lat, lon, start_year, end_year, progress: ProgressCb = N
             progress(i / len(years), f"Descargando NASA POWER {y}…")
         params = dict(parameters="WS10M,WD10M,WS50M,WD50M,T2M,PS", community="RE", longitude=lon, latitude=lat,
                       start=f"{y}0101", end=f"{y}1231", format="JSON", **{"time-standard": "UTC"})
-        r = requests.get(NASA_POWER_URL, params=params, headers=UA, timeout=timeout)
-        r.raise_for_status()
-        df_y, elev = parse_nasa_power(r.json())
+        js = _get_json(NASA_POWER_URL, params, f"NASA POWER (año {y})", timeout=timeout)
+        if "properties" not in js:
+            raise DownloadError(f"NASA POWER (año {y}) respondió sin datos: {_snippet(json.dumps(js))}")
+        df_y, elev = parse_nasa_power(js)
         frames.append(df_y)
     df = pd.concat(frames).sort_index()
     df = df[~df.index.duplicated()].dropna(how="all")
