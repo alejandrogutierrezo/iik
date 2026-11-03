@@ -6,7 +6,9 @@ parques eólicos, pensada para México y para estudiantes universitarios.**
 Interfaz web local en español (Streamlit) sobre un motor en Python. En seis
 pasos se pasa de una lista de coordenadas a la AEP P50/P90 del parque:
 
-1. **Sitio y layout**: carga de coordenadas desde CSV, Excel o Google Earth
+1. **Sitio y layout**: selección de turbinas con clic sobre un mapa de
+   OpenStreetMap (colocar, mover, borrar) e importación de los aerogeneradores
+   que ya están mapeados en OSM para parques construidos; carga de coordenadas desde CSV, Excel o Google Earth
    (KML/KMZ), en lat/lon o UTM; o un layout rectangular generado en una de las
    regiones eólicas de México (Istmo, Tamaulipas, Nuevo León, La Rumorosa,
    altiplano, Yucatán…).
@@ -68,18 +70,46 @@ También se reconocen `nombre/latitud/longitud` y `x/y`, `este/norte` (UTM, se
 indica la zona: 11 en Baja California a 16 en Yucatán). Separador coma, punto y
 coma o tabulador. KML/KMZ: cada Placemark de tipo punto es una turbina.
 
+### Seleccionar turbinas en el mapa (OpenStreetMap)
+
+En el paso 1, modo **Seleccionar en el mapa**:
+
+* **Buscar turbinas de OSM aquí** consulta la Overpass API y muestra en naranja
+  los nodos `power=generator` + `generator:source=wind` del área visible (el
+  icono de aerogenerador de openstreetmap.org). Se toman con un clic, o todas con
+  **Usar todas las de OSM**. Se conservan `ref`/`name` como id, y la altura de
+  buje si está etiquetada (`height:hub`); la columna `osm_id` identifica su origen.
+* Con **Agregar / Mover / Borrar turbina** se edita el layout haciendo clic; las
+  coordenadas también se pueden corregir en la tabla.
+* El fondo **Satélite (Esri)** ayuda a verificar que las posiciones de OSM
+  coinciden con las torres reales; OSM es colaborativo y puede tener errores u
+  omisiones.
+* Si la red bloquea los servidores públicos de Overpass, defina
+  `VIENTOMX_OVERPASS_URL` con otro servidor.
+
+Datos de turbinas © colaboradores de OpenStreetMap, licencia ODbL.
+
 ## Fuentes de datos
 
 | Insumo | Fuente | Notas para México |
 |---|---|---|
-| Viento horario | ERA5 vía Open-Meteo | 0.25°, 1940–presente, 10 y 100 m. Recomendada. |
-| Viento horario | NASA POWER (MERRA-2) | 2001–presente, 10 y 50 m. Útil como segunda opinión. |
-| Viento horario | ERA5 Copernicus CDS | Igual a ERA5, descarga oficial (lenta). |
-| Viento medio 250 m | Global Wind Atlas 3 | Para calibrar el reanálisis (campo "velocidad objetivo"). |
+| Viento horario | ERA5 vía Open-Meteo | 0.25° (~28 km), 1940–presente, 10 y 100 m. Bueno en terreno plano. |
+| Viento horario | **NREL WIND Toolkit México** | Modelo WRF de mesoescala, ~2 km, 2007–2014, 10–200 m, AWS Open Data sin registro. **Recomendada en sierras, cañones y pasos de montaña.** Se descargan solo los bloques del punto (~40 MB/año). |
+| Viento horario | NASA POWER (MERRA-2) | ~50 km, 2001–presente, 10 y 50 m. Segunda opinión. |
+| Viento horario | ERA5 Copernicus CDS | El mismo dato que ERA5 vía Open-Meteo, descarga oficial (lenta). |
+| Viento medio 250 m | Global Wind Atlas | Calibra la media de la serie a 10/50/100/150/200 m: botón automático (GeoTIFF nacional, lectura parcial o descarga única a caché) o GeoTIFF subido. |
 | Elevación | Copernicus DEM GLO-30 | Automático. Alternativa: INEGI CEM 3.0 (15 m) como GeoTIFF. |
 | Cobertura de suelo | ESA WorldCover 2021 | Automático, tabla z0 editable. Alternativa: INEGI USV Serie VII. |
 
 Los datos descargados se guardan en caché en `~/.vientomx/cache`.
+
+**Terreno complejo.** Los reanálisis globales (ERA5, MERRA-2) promedian celdas de
+25–50 km y no ven el encauzamiento del viento en cañones y pasos de montaña. En el
+parque eólico Santa Catarina (N.L.), por ejemplo, ERA5 da 3.1 m/s a 85 m, mientras
+que el WIND Toolkit da 5.4–7.9 m/s (2010, 100 m) en los puntos de malla a menos de 3 km, según su
+posición y elevación. En esos sitios use el WIND Toolkit, calibre con el Global Wind
+Atlas o, mejor, con una medición; la app avisa cuando el RIX medio supera 5 % y la
+fuente es un reanálisis sin calibrar.
 
 ## Librería de curvas de potencia: fuentes sugeridas
 

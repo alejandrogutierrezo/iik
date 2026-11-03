@@ -98,6 +98,29 @@ def flow_factors(grid: terrain.Grid | None, xs, ys, cfg: SimConfig, ref_xy=None)
     return f_ter, f_rou, z0_up
 
 
+def reliability_warnings(summary: dict, met_source: str, calibrated: bool) -> list[str]:
+    """Advertencias sobre la confiabilidad del resultado (terreno complejo, fuente gruesa, viento bajo)."""
+    from .climate import is_coarse_source
+
+    out = []
+    rix = summary.get("RIX medio [%]", 0.0) or 0.0
+    coarse = is_coarse_source(met_source) and not calibrated
+    if rix > 5:
+        out.append(f"Terreno complejo (RIX medio {rix:.0f} %). El modelo lineal de flujo pierde validez por encima de "
+                   "~5 % y no reproduce el encauzamiento en cañones o pasos de montaña"
+                   + (", y la fuente de viento es un reanálisis de malla gruesa sin calibrar: es probable que la AEP "
+                      "esté muy subestimada. Use el WIND Toolkit (2 km), calibre con el Global Wind Atlas o, mejor, "
+                      "con una medición en sitio." if coarse else "."))
+    elif coarse:
+        out.append("La fuente de viento es un reanálisis global (25–50 km) sin calibrar; verifique la velocidad media "
+                   "con el Global Wind Atlas o una medición.")
+    fp = summary.get("Factor de planta neto [%]", 100.0)
+    if fp is not None and fp < 12:
+        out.append(f"Factor de planta neto muy bajo ({fp:.1f} %). Los parques comerciales suelen estar en 20–45 %: "
+                   "revise la fuente de viento, la calibración, la altura de buje y el modelo de turbina.")
+    return out
+
+
 def run_aep(layout: pd.DataFrame, ts_hub: pd.DataFrame, turbine: Turbine, cfg: SimConfig,
             grid: terrain.Grid | None = None, rho: float = 1.225, ref_latlon=None,
             progress=None) -> Results:
