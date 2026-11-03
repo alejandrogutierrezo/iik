@@ -16,7 +16,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vientomx import aep, climate, gwa, layout, met, osm, report, terrain, turbines, wtk  # noqa: E402
+from vientomx import aep, climate, gwa, layout, met, osm, project_io, report, terrain, turbines, wtk  # noqa: E402
 
 st.set_page_config(page_title="VientoMX · Evaluación de recurso eólico", page_icon="🌬️", layout="wide")
 
@@ -25,7 +25,7 @@ for k, v in dict(layout=None, met=None, met_reanalysis=None, ref_latlon=None, gr
                  hub_height=100.0, results=None, cfg=None, calib=None, mcp_info=None,
                  osm_turbines=None, map_center=None, map_zoom=None, map_bounds=None, move_sel=None,
                  prev_obj_click=None, prev_map_click=None, layout_ver=0, calib_h=None, calib_ref=None,
-                 wtk_points=None, gwa_info=None).items():
+                 wtk_points=None, gwa_info=None, met_ui={}, terrain_ui={}, sim_ui={}, sim_ver=0, io_ver=0).items():
     SS.setdefault(k, v)
 
 # Longitudes fuera de [-180, 180) (p. ej. de clics en otra "copia" del mundo en el mapa) rompen las descargas
@@ -34,6 +34,10 @@ if SS.layout is not None and not SS.layout.empty and (SS.layout.lon.abs() > 180)
     SS.layout_ver += 1
 
 COLORS = px.colors.sequential.Viridis
+CUR_UI: dict[str, dict] = {}  # opciones elegidas en cada paso durante esta ejecución (para guardarlas)
+
+for _m in SS.pop("io_msgs", []):  # avisos de cargas hechas en la ejecución anterior
+    st.toast(_m, icon="💾")
 
 
 @st.cache_resource(show_spinner="Cargando librería de aerogeneradores…")
@@ -49,6 +53,151 @@ def progress_cb(bar):
 
 def ok(flag):
     return "✅" if flag else "⬜"
+
+
+# ------------------------------------------------------------------ guardar / cargar configuración
+# Cada _ser_* toma una «foto» del estado actual y devuelve una función sin argumentos que genera el archivo
+# (st.download_button la ejecuta al hacer clic, en otro hilo, donde no se debe leer st.session_state),
+# o None si el paso aún no tiene nada que guardar.
+def _ser_layout():
+    if SS.layout is None or SS.layout.empty:
+        return None
+    lay, c, z = SS.layout.copy(), SS.map_center, SS.map_zoom
+    return lambda: project_io.layout_to_json(lay, c, z)
+
+
+def _ser_met(ui=None):
+    if SS.met is None:
+        return None
+    args = (SS.met, SS.met_reanalysis, SS.ref_latlon, SS.calib, SS.calib_h, SS.calib_ref, SS.gwa_info, SS.mcp_info,
+            ui if ui is not None else SS.met_ui)
+    return lambda: project_io.met_to_zip(*args)
+
+
+def _ser_grid(ui=None):
+    if SS.grid is None or SS.grid.elev is None:
+        return None
+    g, ui = SS.grid, ui if ui is not None else SS.terrain_ui
+    return lambda: project_io.grid_to_zip(g, ui)
+
+
+def _ser_turbine():
+    if SS.turbine is None:
+        return None
+    t, hh = SS.turbine, float(SS.hub_height)
+    return lambda: project_io.turbine_to_json(t, hh)
+
+
+def _ser_sim(ui=None):
+    ui = ui if ui is not None else SS.sim_ui
+    if not ui:
+        return None
+    ui = dict(ui)
+    return lambda: project_io.sim_to_json(ui)
+
+
+def _ser_project():
+    sers = {"layout": _ser_layout(), "viento": _ser_met(CUR_UI.get("viento")), "terreno": _ser_grid(),
+            "turbina": _ser_turbine(), "simulacion": _ser_sim(CUR_UI.get("simulacion"))}
+    sers = {k: f for k, f in sers.items() if f is not None}
+    if not sers:
+        return None
+    return lambda: project_io.project_to_zip({k: f() for k, f in sers.items()})
+
+
+def _apply_layout(data):
+    df, extra = project_io.layout_from_json(data)
+    SS.layout, SS.results, SS.move_sel, SS.osm_turbines = df, None, None, None
+    SS.map_center = extra.get("centro") or [float(df.lat.mean()), float(df.lon.mean())]
+    SS.map_zoom = extra.get("zoom") or 14
+    SS.layout_ver += 1
+    msg = f"Layout cargado: {len(df)} aerogeneradores."
+    return msg + (" " + df.attrs["warning"] if df.attrs.get("warning") else "")
+
+
+def _apply_met(data):
+    d = project_io.met_from_zip(data)
+    for k in ("met", "met_reanalysis", "ref_latlon", "calib", "calib_h", "calib_ref", "gwa_info", "mcp_info"):
+        SS[k] = d[k]
+    SS.met_ui, SS.results = d["ui"], None
+    return f"Datos de viento cargados: {d['met'].source}, {len(d['met'].df):,} horas."
+
+
+def _apply_grid(data):
+    g, ui = project_io.grid_from_zip(data)
+    SS.grid, SS.terrain_ui, SS.results = g, ui, None
+    return f"Terreno cargado: malla {g.nx}×{g.ny} a {g.dx:g} m ({g.meta.get('dem_source', 'DEM')})."
+
+
+def _apply_turbine(data):
+    t, hh = project_io.turbine_from_json(data)
+    SS.turbine, SS.results = t, None
+    if hh:
+        SS.hub_height = hh
+    return f"Aerogenerador cargado: {t.name}" + (f", buje {hh:g} m." if hh else ".")
+
+
+def _apply_sim(data):
+    SS.sim_ui, SS.results = project_io.sim_from_json(data), None
+    SS.sim_ver += 1
+    return "Configuración de la simulación cargada."
+
+
+APPLY = {"layout": _apply_layout, "viento": _apply_met, "terreno": _apply_grid, "turbina": _apply_turbine,
+         "simulacion": _apply_sim}
+
+
+def _apply_project(data):
+    parts = project_io.project_from_zip(data)
+    done, errs = [], []
+    for k in project_io.PROJECT_MEMBERS:  # en orden: el layout primero
+        if k in parts:
+            try:
+                APPLY[k](parts[k])
+                done.append(project_io.KIND_NAMES[k])
+            except Exception as e:
+                errs.append(f"{project_io.KIND_NAMES[k]}: {e}")
+    if errs:
+        SS.setdefault("io_msgs", []).extend("⚠️ " + e for e in errs)
+    return "Proyecto cargado: " + (", ".join(done) if done else "ningún paso")
+
+
+def _load_uploader(kind, label, types, help=None):
+    """file_uploader que aplica la configuración subida una sola vez y reinicia el control."""
+    up = st.file_uploader(label, type=types, key=f"io_up_{kind}_{SS.io_ver}", help=help)
+    if up is None:
+        return
+    if SS.get(f"io_bad_{kind}", (None,))[0] == up.file_id:
+        st.error(SS[f"io_bad_{kind}"][1])
+        return
+    try:
+        apply = _apply_project if kind == "proyecto" else APPLY[kind]
+        msg = apply(up.getvalue())
+    except Exception as e:
+        found = project_io.detect_kind(up.getvalue())
+        hint = (" Súbalo en la barra lateral, en «Guardar / cargar proyecto completo»." if found == "proyecto"
+                and kind != "proyecto" else " Súbalo en ese paso." if found and found != kind else "")
+        SS[f"io_bad_{kind}"] = (up.file_id, f"No se pudo cargar la configuración: {e}{hint}")
+        st.error(SS[f"io_bad_{kind}"][1])
+        return
+    SS.setdefault("io_msgs", []).insert(0, msg)
+    SS.io_ver += 1
+    st.rerun()
+
+
+def _step_io(kind, ser, file_name, types, what, missing="Aún no hay nada que guardar en este paso."):
+    """Caja «Guardar / cargar configuración» de un paso. ``ser`` es la función que genera el archivo (o None)."""
+    with st.expander("💾 Guardar / cargar la configuración de este paso"):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"**Guardar** — {what}")
+            st.download_button("⬇ Guardar configuración", ser if ser is not None else b"", file_name,
+                               disabled=ser is None, on_click="ignore", key=f"io_save_{kind}",
+                               mime="application/zip" if file_name.endswith(".zip") else "application/json")
+            if ser is None:
+                st.caption(missing)
+        with c2:
+            _load_uploader(kind, "Cargar configuración guardada", types)
 
 
 def _map_editor():
@@ -235,6 +384,7 @@ with st.sidebar:
         SS.grid = g
         SS.results = None
         st.rerun()
+    proj_box = st.container()  # se llena al final, cuando ya se conocen las opciones de cada paso
     st.caption("Datos: ERA5 (Copernicus/ECMWF), NASA POWER, Copernicus DEM, ESA WorldCover, NREL turbine-models, OEDB.")
 
 tabs = st.tabs(["① Sitio y layout", "② Viento", "③ Terreno", "④ Aerogenerador", "⑤ Simulación", "⑥ Resultados",
@@ -243,6 +393,9 @@ tabs = st.tabs(["① Sitio y layout", "② Viento", "③ Terreno", "④ Aerogene
 # ------------------------------------------------------------------ 1. layout
 with tabs[0]:
     st.header("Sitio y ubicación de aerogeneradores")
+    _step_io("layout", _ser_layout(), "VientoMX.vmx-layout.json", ["json"],
+             "coordenadas, ID y altura de buje de cada turbina, y la vista del mapa (JSON).",
+             "Defina primero el layout.")
     mode = st.radio("¿Cómo quiere definir el layout?", ["Seleccionar en el mapa (OpenStreetMap)",
                                                          "Subir archivo de coordenadas", "Generar layout rectangular"],
                     horizontal=True)
@@ -330,36 +483,42 @@ with tabs[0]:
 # ------------------------------------------------------------------ 2. viento
 with tabs[1]:
     st.header("Datos meteorológicos")
+    io_box = st.container()
     if SS.layout is None:
         st.info("Primero defina el layout (paso 1) para ubicar el punto de referencia.")
     else:
         lat0, lon0 = float(SS.layout.lat.mean()), float(SS.layout.lon.mean())
-        src = st.selectbox("Fuente de datos", [
+        met_sources = [
             "ERA5 vía Open-Meteo (sin registro, recomendado)",
             "NREL WIND Toolkit México — WRF ~2 km, 2007–2014 (sin registro; mejor en montaña)",
             "NASA POWER / MERRA-2 (sin registro)",
             "ERA5 desde Copernicus CDS (requiere API key)",
             "Medición propia: torre o LiDAR (CSV)",
-        ])
+        ]
+        mui = SS.met_ui  # opciones de una configuración cargada (si la hay)
+        src = st.selectbox("Fuente de datos", met_sources,
+                           index=met_sources.index(mui["fuente"]) if mui.get("fuente") in met_sources else 0)
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            plat = st.number_input("Latitud del punto", value=round(lat0, 4), format="%.4f")
+            plat = st.number_input("Latitud del punto", value=float(mui.get("lat", round(lat0, 4))), format="%.4f")
         with c2:
-            plon = st.number_input("Longitud del punto", value=round(lon0, 4), format="%.4f")
+            plon = st.number_input("Longitud del punto", value=float(mui.get("lon", round(lon0, 4))), format="%.4f")
         is_wtk = "WIND Toolkit" in src
+        CUR_UI["viento"] = {"fuente": src, "lat": plat, "lon": plon}
         if not src.startswith("Medición"):
+            yui = mui if mui.get("fuente") == src else {}
+            ylo = 2007 if is_wtk else (1981 if "NASA" not in src else 2001)
+            yhi = 2014 if is_wtk else 2025
             with c3:
-                if is_wtk:
-                    y0 = st.number_input("Año inicial", 2007, 2014, 2007)
-                else:
-                    y0 = st.number_input("Año inicial", 1981 if "NASA" not in src else 2001, 2025, 2005)
+                y0 = st.number_input("Año inicial", ylo, yhi,
+                                     min(max(int(yui.get("anio_inicial", 2007 if is_wtk else 2005)), ylo), yhi))
             with c4:
-                if is_wtk:
-                    y1 = st.number_input("Año final", 2007, 2014, 2013,
-                                         help="2014 está en otra versión del archivo: requiere indexarlo aparte y "
-                                              "descarga ~4 veces más datos.")
-                else:
-                    y1 = st.number_input("Año final", 1981, 2025, 2024)
+                y1lo = 2007 if is_wtk else 1981
+                y1 = st.number_input("Año final", y1lo, yhi,
+                                     min(max(int(yui.get("anio_final", 2013 if is_wtk else 2024)), y1lo), yhi),
+                                     help="2014 está en otra versión del archivo: requiere indexarlo aparte y "
+                                          "descarga ~4 veces más datos." if is_wtk else None)
+            CUR_UI["viento"].update(anio_inicial=int(y0), anio_final=int(y1))
             wtk_gid = None
             if is_wtk:
                 st.caption("Modelo de mesoescala WRF (3Tier/Vaisala para el NREL), malla de ~2 km, horario, 10–200 m. "
@@ -582,27 +741,40 @@ with tabs[1]:
                                           labels=dict(x="Hora local", y="Sector", color="α"),
                                           title=f"Exponente de cizalladura α ({m.heights[0]:g}–{m.heights[-1]:g} m)"))
         st.download_button("Descargar serie horaria (CSV)", m.df.to_csv(index_label="time_utc"), "viento_horario.csv")
+    with io_box:
+        _step_io("viento", _ser_met(CUR_UI.get("viento")), "VientoMX.vmx-viento.zip", ["zip"],
+                 "series horarias descargadas o medidas (CSV), reanálisis del MCP, calibración y opciones (ZIP). "
+                 "Al cargarlo no hace falta volver a descargar.", "Descargue o cargue primero los datos de viento.")
 
 # ------------------------------------------------------------------ 3. terreno
 with tabs[2]:
     st.header("Terreno y rugosidad")
+    io_box = st.container()
     if SS.layout is None:
         st.info("Primero defina el layout (paso 1).")
     else:
+        tui = SS.terrain_ui  # opciones de una configuración cargada (si la hay)
+        t_sources = ["Descargar Copernicus DEM 30 m + ESA WorldCover 10 m",
+                     "Subir GeoTIFF propio (p. ej. INEGI CEM 3.0)", "Terreno plano (sin efectos)"]
         c1, c2, c3 = st.columns(3)
         with c1:
-            tsrc = st.selectbox("Fuente", ["Descargar Copernicus DEM 30 m + ESA WorldCover 10 m",
-                                           "Subir GeoTIFF propio (p. ej. INEGI CEM 3.0)", "Terreno plano (sin efectos)"])
+            tsrc = st.selectbox("Fuente", t_sources,
+                                index=t_sources.index(tui["fuente"]) if tui.get("fuente") in t_sources else 0)
         with c2:
-            buf = st.slider("Margen alrededor del parque [km]", 3, 20, 8,
+            buf = st.slider("Margen alrededor del parque [km]", 3, 20, int(tui.get("margen_km", 8)),
                             help="Debe incluir colinas y cambios de rugosidad que afecten al parque.")
         with c3:
-            res = st.select_slider("Resolución de cálculo [m]", [50, 100, 200], 100)
+            res = st.select_slider("Resolución de cálculo [m]", [50, 100, 200],
+                                   int(tui["resolucion_m"]) if tui.get("resolucion_m") in (50, 100, 200) else 100)
         with st.expander("Tabla de rugosidad por tipo de cobertura (editable)"):
+            z0_load = {int(k): float(v) for k, v in (tui.get("z0_tabla") or {}).items()}
             z0tab = pd.DataFrame({"Clase": list(terrain.WORLDCOVER_Z0),
                                   "Cobertura": [terrain.WORLDCOVER_NAMES[k] for k in terrain.WORLDCOVER_Z0],
-                                  "z0 [m]": list(terrain.WORLDCOVER_Z0.values())})
-            z0tab = st.data_editor(z0tab, disabled=["Clase", "Cobertura"], hide_index=True)
+                                  "z0 [m]": [z0_load.get(k, v) for k, v in terrain.WORLDCOVER_Z0.items()]})
+            z0tab = st.data_editor(z0tab, disabled=["Clase", "Cobertura"], hide_index=True,
+                                   key=f"z0_ed_{SS.io_ver}")
+        CUR_UI["terreno"] = {"fuente": tsrc, "margen_km": int(buf), "resolucion_m": int(res),
+                             "z0_tabla": {int(c): float(z) for c, z in zip(z0tab["Clase"], z0tab["z0 [m]"])}}
         up_dem = up_z0 = None
         if tsrc.startswith("Subir"):
             up_dem = st.file_uploader("GeoTIFF de elevación", type=["tif", "tiff"], key="dem_up")
@@ -633,6 +805,12 @@ with tabs[2]:
                 bar.progress(1.0, text="Terreno listo")
             except Exception as e:
                 st.error(f"Error al preparar el terreno: {e}")
+            else:
+                SS.terrain_ui = CUR_UI["terreno"]
+    with io_box:
+        _step_io("terreno", _ser_grid(), "VientoMX.vmx-terreno.zip", ["zip"],
+                 "elevación, rugosidad y cobertura ya preparadas en la malla de cálculo, con sus opciones (ZIP). "
+                 "Al cargarlo no hace falta volver a descargar el DEM.", "Prepare o cargue primero el terreno.")
 
     g = SS.grid
     if g is not None and g.elev is not None and SS.layout is not None:
@@ -684,6 +862,7 @@ with tabs[2]:
 # ------------------------------------------------------------------ 4. turbina
 with tabs[3]:
     st.header("Aerogenerador")
+    io_box = st.container()
     lib = get_library()
     tab = turbines.library_table(lib)
     c1, c2 = st.columns([1, 1])
@@ -737,32 +916,45 @@ with tabs[3]:
                         "referencia. Para estudios formales use la curva Ct del fabricante.")
         else:
             st.info("Seleccione un modelo de la librería.")
+    with io_box:
+        _step_io("turbina", _ser_turbine(), "VientoMX.vmx-turbina.json", ["json"],
+                 "modelo, diámetro, curva de potencia y Ct completas y altura de buje (JSON). Sirve también para "
+                 "compartir curvas propias.", "Seleccione primero un aerogenerador.")
 
 # ------------------------------------------------------------------ 5. simulación
 with tabs[4]:
     st.header("Simulación de producción anual")
+    io_box = st.container()
+    sui = SS.sim_ui  # opciones de una configuración cargada (si la hay)
     missing = [n for n, v in [("layout", SS.layout), ("datos de viento", SS.met), ("aerogenerador", SS.turbine)] if v is None]
     if missing:
         st.info("Falta: " + ", ".join(missing) + ". El terreno es opcional (si falta, se supone plano).")
     c1, c2, c3 = st.columns(3)
     with c1:
         st.subheader("Estelas")
-        wm = st.selectbox("Modelo", ["Jensen / Park (WAsP clásico)", "Gaussiano Bastankhah", "Sin estelas"])
+        wmodels = {"jensen": "Jensen / Park (WAsP clásico)", "bastankhah": "Gaussiano Bastankhah", "none": "Sin estelas"}
+        wm = st.selectbox("Modelo", list(wmodels.values()),
+                          index=list(wmodels).index(sui.get("wake_model", "jensen")))
         wmk = {"J": "jensen", "G": "bastankhah", "S": "none"}[wm[0]]
-        k = st.number_input("Constante de expansión k (Jensen)", 0.02, 0.15, 0.075, 0.005,
+        k = st.number_input("Constante de expansión k (Jensen)", 0.02, 0.15,
+                            min(max(float(sui.get("wake_k", 0.075)), 0.02), 0.15), 0.005,
                             help="0.075 en tierra, 0.04–0.05 en mar o terreno muy liso.")
-        ti = st.number_input("Intensidad de turbulencia ambiente (Gaussiano)", 0.03, 0.30, 0.10, 0.01)
+        ti = st.number_input("Intensidad de turbulencia ambiente (Gaussiano)", 0.03, 0.30,
+                             min(max(float(sui.get("ti", 0.10)), 0.03), 0.30), 0.01)
     with c2:
         st.subheader("Flujo y densidad")
-        use_t = st.checkbox("Efectos de orografía", True)
-        use_r = st.checkbox("Efectos de rugosidad", True)
-        hb = st.number_input("Altura de mezcla para rugosidad [m]", 100.0, 1000.0, 300.0, 50.0)
-        rho_auto = st.checkbox("Densidad del aire de los datos", True)
-        rho_man = st.number_input("Densidad manual [kg/m³]", 0.8, 1.3, 1.225, 0.005, disabled=rho_auto)
+        use_t = st.checkbox("Efectos de orografía", bool(sui.get("use_terrain", True)))
+        use_r = st.checkbox("Efectos de rugosidad", bool(sui.get("use_roughness", True)))
+        hb = st.number_input("Altura de mezcla para rugosidad [m]", 100.0, 1000.0,
+                             min(max(float(sui.get("blending_height", 300.0)), 100.0), 1000.0), 50.0)
+        rho_auto = st.checkbox("Densidad del aire de los datos", bool(sui.get("air_density_auto", True)))
+        rho_man = st.number_input("Densidad manual [kg/m³]", 0.8, 1.3,
+                                  min(max(float(sui.get("air_density") or 1.225), 0.8), 1.3), 0.005, disabled=rho_auto)
     with c3:
         st.subheader("Pérdidas [%]")
-        ldf = pd.DataFrame({"Concepto": list(aep.DEFAULT_LOSSES), "Pérdida [%]": list(aep.DEFAULT_LOSSES.values())})
-        ldf = st.data_editor(ldf, hide_index=True, disabled=["Concepto"], key="loss_ed")
+        losses0 = {**aep.DEFAULT_LOSSES, **(sui.get("losses") or {})}
+        ldf = pd.DataFrame({"Concepto": list(losses0), "Pérdida [%]": list(losses0.values())})
+        ldf = st.data_editor(ldf, hide_index=True, disabled=["Concepto"], key=f"loss_ed_{SS.sim_ver}")
     with st.expander("Incertidumbres (1σ)"):
         st.caption("'ws' = % de velocidad (se convierte a energía con la sensibilidad calculada); 'energy' = % de energía; "
                    "'wake_frac' = % de la pérdida por estelas. Con medición en sitio + MCP, reduzca 'Datos de viento' a ~2–3 %.")
@@ -771,9 +963,18 @@ with tabs[4]:
             default_unc["Datos de viento (fuente)"] = ("ws", 2.5)
         elif SS.calib:
             default_unc["Datos de viento (fuente)"] = ("ws", 5.0)
+        default_unc.update(sui.get("uncertainty") or {})
         udf = pd.DataFrame({"Componente": list(default_unc), "Tipo": [v[0] for v in default_unc.values()],
                             "Valor": [v[1] for v in default_unc.values()]})
-        udf = st.data_editor(udf, hide_index=True, disabled=["Componente", "Tipo"], key="unc_ed")
+        udf = st.data_editor(udf, hide_index=True, disabled=["Componente", "Tipo"], key=f"unc_ed_{SS.sim_ver}")
+    CUR_UI["simulacion"] = {"wake_model": wmk, "wake_k": float(k), "ti": float(ti), "use_terrain": bool(use_t),
+                            "use_roughness": bool(use_r), "blending_height": float(hb),
+                            "air_density_auto": bool(rho_auto), "air_density": float(rho_man),
+                            "losses": dict(zip(ldf["Concepto"], ldf["Pérdida [%]"].astype(float))),
+                            "uncertainty": {r.Componente: (r.Tipo, float(r.Valor)) for r in udf.itertuples()}}
+    with io_box:
+        _step_io("simulacion", _ser_sim(CUR_UI["simulacion"]), "VientoMX.vmx-simulacion.json", ["json"],
+                 "modelo y parámetros de estelas, opciones de flujo y densidad, pérdidas e incertidumbres (JSON).")
 
     if st.button("▶ Calcular AEP", type="primary", disabled=bool(missing)):
         cfg = aep.SimConfig(hub_height=float(SS.hub_height), wake_model=wmk, wake_k=k, ti=ti, use_terrain=use_t,
@@ -896,3 +1097,14 @@ with tabs[5]:
 # ------------------------------------------------------------------ método
 with tabs[6]:
     st.markdown((Path(__file__).resolve().parents[1] / "docs" / "metodo.md").read_text(encoding="utf-8"))
+
+# ------------------------------------------------------------------ proyecto completo (barra lateral)
+with proj_box:
+    with st.expander("💾 Guardar / cargar proyecto completo"):
+        st.caption("Un ZIP con la configuración de todos los pasos que tengan datos (layout, viento, terreno, "
+                   "aerogenerador y simulación). Los resultados se recalculan con ▶ Calcular AEP.")
+        ser_p = _ser_project()
+        st.download_button("⬇ Guardar proyecto (ZIP)", ser_p if ser_p is not None else b"",
+                           "VientoMX.vmx-proyecto.zip", mime="application/zip", disabled=ser_p is None,
+                           on_click="ignore", key="io_save_proyecto", width="stretch")
+        _load_uploader("proyecto", "Cargar proyecto", ["zip"])

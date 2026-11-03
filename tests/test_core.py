@@ -324,3 +324,66 @@ def test_gwa_sampling_and_calibration(tmp_path, monkeypatch):
     w = aep.reliability_warnings({"RIX medio [%]": 21, "Factor de planta neto [%]": 4.7}, "ERA5 (Open-Meteo)", False)
     assert len(w) == 2 and "subestimada" in w[0]
     assert aep.reliability_warnings({"RIX medio [%]": 1, "Factor de planta neto [%]": 30}, "NREL WIND Toolkit", False) == []
+
+
+# ------------------------------------------------------------------ guardar / cargar configuración
+def test_project_io_roundtrip(lib):
+    from vientomx import project_io as pio
+
+    lay = layout.grid_layout(16.55, -94.95, 2, 3, 7, 3, 130, 0)
+    lay["osm_id"] = ["node/1", None, None, None, None, "node/6"]
+    lay2, extra = pio.layout_from_json(pio.layout_to_json(lay, [16.55, -94.95], 13))
+    pd.testing.assert_frame_equal(lay2[["id", "lat", "lon"]], lay[["id", "lat", "lon"]])
+    assert lay2.osm_id.iloc[0] == "node/1" and extra == {"centro": [16.55, -94.95], "zoom": 13}
+
+    m = met.synthetic_met(years=(2018, 2019))
+    m.notes.append("nota")
+    mcp = pd.DataFrame({"sector": [0, 30], "r2": [0.8, 0.7]})
+    mcp.attrs.update(r2_total=0.75, veer=3.0)
+    d = pio.met_from_zip(pio.met_to_zip(m, m, (16.5, -94.9), 8.5, 100, (16.55, -94.95), {"height": 100},
+                                        mcp, {"fuente": "x", "anio_inicial": 2018}))
+    m2 = d["met"]
+    assert m2.source == m.source and m2.notes == ["nota"] and d["met_reanalysis"] is m2
+    assert list(m2.df.columns) == list(m.df.columns) and m2.df.index.equals(m.df.index)
+    assert np.allclose(m2.df.to_numpy(), m.df.to_numpy(), rtol=1e-3, equal_nan=True)
+    assert d["calib"] == 8.5 and d["calib_ref"] == (16.55, -94.95) and d["ref_latlon"] == (16.5, -94.9)
+    assert d["mcp_info"].attrs["r2_total"] == 0.75 and d["ui"]["anio_inicial"] == 2018
+    rean = met.synthetic_met(years=(2010, 2019), seed=1)
+    d = pio.met_from_zip(pio.met_to_zip(m, rean))
+    assert len(d["met_reanalysis"].df) == len(rean.df) and d["calib"] is None
+
+    g, _, _ = terrain.make_grid(lay.lat, lay.lon, 3, 200)
+    terrain.flat_terrain(g, 30, 0.05)
+    g.elev[3, 4] = 55.0
+    g2, ui = pio.grid_from_zip(pio.grid_to_zip(g, {"margen_km": 3}))
+    assert g2.crs == g.crs and (g2.nx, g2.ny, g2.dx, g2.x0) == (g.nx, g.ny, g.dx, g.x0)
+    assert np.array_equal(g2.elev, g.elev) and np.array_equal(g2.z0, g.z0) and ui == {"margen_km": 3}
+
+    for name in ("IEA Reference 3.4 MW D130", next(n for n, t in lib.items() if t.ct_estimated)):
+        t = lib[name]
+        t2, hh = pio.turbine_from_json(pio.turbine_to_json(t, 110))
+        assert hh == 110 and t2.name == t.name and t2.ct_estimated == t.ct_estimated
+        assert np.allclose(t2.power_kw, t.power_kw) and np.allclose(t2.ct, t.ct) and np.allclose(t2.ws, t.ws)
+
+    sim = {"wake_model": "bastankhah", "wake_k": 0.05, "ti": 0.08, "use_terrain": False, "use_roughness": True,
+           "blending_height": 250.0, "air_density_auto": False, "air_density": 1.1,
+           "losses": dict(aep.DEFAULT_LOSSES), "uncertainty": dict(aep.DEFAULT_UNCERTAINTY)}
+    assert pio.sim_from_json(pio.sim_to_json(sim)) == sim
+
+    parts = {"layout": pio.layout_to_json(lay), "turbina": pio.turbine_to_json(lib[name])}
+    back = pio.project_from_zip(pio.project_to_zip(parts))
+    assert back == parts
+    assert pio.detect_kind(pio.project_to_zip(parts)) == "proyecto"
+    assert pio.detect_kind(pio.grid_to_zip(g)) == "terreno"
+
+
+def test_project_io_rejects_wrong_step():
+    from vientomx import project_io as pio
+
+    lay = layout.grid_layout(16.55, -94.95, 1, 2, 7, 3, 130, 0)
+    with pytest.raises(ValueError, match="Sitio y layout"):
+        pio.turbine_from_json(pio.layout_to_json(lay))
+    with pytest.raises(ValueError, match="ZIP"):
+        pio.met_from_zip(pio.layout_to_json(lay))
+    with pytest.raises(ValueError, match="VientoMX"):
+        pio.sim_from_json(json.dumps({"a": 1}).encode())

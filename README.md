@@ -89,6 +89,25 @@ En el paso 1, modo **Seleccionar en el mapa**:
 
 Datos de turbinas © colaboradores de OpenStreetMap, licencia ODbL.
 
+### Guardar y cargar la configuración
+
+Cada paso tiene una caja **💾 Guardar / cargar la configuración de este paso**
+(arriba de la pestaña), y la barra lateral tiene **Guardar / cargar proyecto
+completo**. Al cargar un archivo se restauran los datos y las opciones del paso,
+sin volver a descargar nada.
+
+| Paso | Archivo | Contenido |
+|---|---|---|
+| 1 · Sitio y layout | `*.vmx-layout.json` | id, lat, lon, `osm_id`, altura de buje por turbina; vista del mapa |
+| 2 · Viento | `*.vmx-viento.zip` | `serie.csv` (serie horaria UTC usada en el estudio), `reanalisis.csv` (si hubo MCP), `config.json` (fuente, punto, calibración/GWA, tabla del MCP, años elegidos) |
+| 3 · Terreno | `*.vmx-terreno.zip` | `malla.npz` (elevación, z0 y cobertura en la malla UTM de cálculo) y `config.json` (CRS, malla, fuentes, margen, resolución, tabla de z0) |
+| 4 · Aerogenerador | `*.vmx-turbina.json` | nombre, diámetro, curvas de potencia y Ct, altura de buje |
+| 5 · Simulación | `*.vmx-simulacion.json` | modelo y parámetros de estelas, flujo, densidad, pérdidas e incertidumbres |
+| Proyecto | `*.vmx-proyecto.zip` | un archivo de cada paso anterior que tenga datos |
+
+Los resultados (paso 6) no se guardan: se recalculan con **▶ Calcular AEP**. Los
+archivos se leen y escriben también desde Python con `vientomx.project_io`.
+
 ## Fuentes de datos
 
 | Insumo | Fuente | Notas para México |
