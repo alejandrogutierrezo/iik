@@ -1,0 +1,135 @@
+import io
+import json
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from vientomx import aep, climate, layout, met, terrain, turbines, wake
+
+
+@pytest.fixture(scope="module")
+def lib():
+    return turbines.load_library()
+
+
+def test_library_has_commercial_and_reference(lib):
+    assert len(lib) > 100
+    assert any("Vestas" in k for k in lib)
+    t = lib["IEA Reference 3.4 MW D130"]
+    assert not t.ct_estimated
+    assert t.rated_kw == pytest.approx(3400, rel=0.01)
+
+
+def test_ct_estimate_close_to_reference(lib):
+    t = lib["NREL Reference 5 MW D126"]
+    est = turbines.estimate_ct(t.ws, t.power_kw, t.rotor_diameter)
+    m = (t.ws >= 5) & (t.ws <= 20)
+    assert np.mean(np.abs(est[m] - t.ct[m])) < 0.08
+
+
+def test_density_correction(lib):
+    t = lib["IEA Reference 3.4 MW D130"]
+    assert t.power(8, 1.0) < t.power(8, 1.225)
+    assert t.power(26) == 0
+
+
+def test_jensen_analytic():
+    # Ct=0.8, x=7D, k=0.075 -> (1-sqrt(0.2))/(1+0.075*14)^2
+    d = wake.jensen_deficit(0.8, 7 * 100, 0.0, 100, 0.075)
+    assert d == pytest.approx((1 - np.sqrt(0.2)) / (1 + 0.075 * 14) ** 2, rel=1e-6)
+    assert wake.jensen_deficit(0.8, -500, 0.0, 100) == 0
+
+
+def test_farm_speeds_downstream_only(lib):
+    t = lib["IEA Reference 3.4 MW D130"]
+    xs, ys = np.array([0.0, 0.0]), np.array([0.0, -910.0])  # 2a turbina al sur
+    u = np.full((2, 1), 9.0)
+    ue = wake.farm_speeds(xs, ys, 0.0, u, t)  # viento del norte
+    assert ue[0, 0] == 9.0 and ue[1, 0] < 9.0
+    ue2 = wake.farm_speeds(xs, ys, 90.0, u, t)  # viento del este: sin estela
+    assert np.allclose(ue2, 9.0)
+
+
+def test_orographic_agnesi():
+    dx, n, H, L = 50, 512, 100, 1000
+    x = (np.arange(n) - n / 2) * dx
+    elev = np.tile(H * L**2 / (x**2 + L**2), (n, 1))
+    for z in (10, 100):
+        du = terrain.orographic_speedup_map(elev, dx, 270, z, cutoff_wavelength=None, taper=0.0)
+        assert du[n // 2, n // 2] == pytest.approx(H * L / (L + z) ** 2, rel=0.03)
+
+
+def test_roughness_factor_direction():
+    f = terrain.roughness_factors(np.array([0.3]), 0.03, 100)
+    assert f[0] < 1
+    assert terrain.roughness_factors(np.array([0.03]), 0.03, 100)[0] == pytest.approx(1)
+
+
+def test_tile_names():
+    assert terrain.copernicus_tile_url(16, -95).endswith("Copernicus_DSM_COG_10_N16_00_W095_00_DEM.tif")
+    assert terrain.worldcover_tile_url(15, -96).endswith("_N15W096_Map.tif")
+
+
+def test_layout_formats():
+    csv = "Nombre;Latitud;Longitud\nA;16.5;-94.9\nB;16.51;-94.9\n"
+    df = layout.load_layout(io.BytesIO(csv.encode()), "x.csv")
+    assert list(df.id) == ["A", "B"]
+    utm = "id,Este,Norte\nA,290547,1829873\n"
+    df = layout.load_layout(io.BytesIO(utm.encode()), "x.csv", utm_zone=15)
+    assert df.lat[0] == pytest.approx(16.5417, abs=1e-3)
+    kml = b"""<?xml version="1.0"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+      <Placemark><name>T1</name><Point><coordinates>-94.9,16.5,0</coordinates></Point></Placemark>
+      </Document></kml>"""
+    df = layout.load_layout(io.BytesIO(kml), "x.kml")
+    assert df.lon[0] == -94.9
+
+
+def test_parsers():
+    om = {"hourly_units": {"wind_speed_100m": "m/s"},
+          "hourly": {"time": ["2020-01-01T00:00", "2020-01-01T01:00"], "wind_speed_10m": [5, 6],
+                     "wind_speed_100m": [8, 9], "wind_direction_10m": [350, 0], "wind_direction_100m": [355, 5],
+                     "temperature_2m": [25, 24], "surface_pressure": [1000, 1001]}}
+    df = met.parse_open_meteo(om)
+    assert list(df.columns[:4]) == ["ws_10", "wd_10", "ws_100", "wd_100"] and df.ws_100.iloc[1] == 9
+    nasa = {"geometry": {"coordinates": [-94.9, 16.5, 40.0]},
+            "properties": {"parameter": {"WS50M": {"2020010100": 7.0, "2020010101": -999.0},
+                                          "WD50M": {"2020010100": 10.0, "2020010101": 20.0},
+                                          "PS": {"2020010100": 100.5, "2020010101": 100.4}}}}
+    df, elev = met.parse_nasa_power(nasa)
+    assert elev == 40 and np.isnan(df.ws_50.iloc[1]) and df.ps.iloc[0] == pytest.approx(1005)
+
+
+def test_mcp_recovers_linear_relation():
+    m = met.synthetic_met(years=(2015, 2017))
+    ref = climate.extrapolate_to_height(m, 100)
+    meas = ref.loc["2016"].copy()
+    meas["ws"] = 1.1 * meas["ws"] + 0.3
+    lt, info = climate.mcp_variance_ratio(meas, ref)
+    assert lt.ws.mean() == pytest.approx(1.1 * ref.ws.mean() + 0.3, rel=0.02)
+
+
+def test_end_to_end_flat(lib):
+    t = lib["IEA Reference 3.4 MW D130"]
+    m = met.synthetic_met(years=(2015, 2017))
+    ts = climate.extrapolate_to_height(m, 110)
+    lay = layout.grid_layout(16.55, -94.95, 2, 4, 7, 3, 130)
+    g, _, _ = terrain.make_grid(lay.lat, lay.lon, 4, 100)
+    terrain.flat_terrain(g)
+    cfg = aep.SimConfig(hub_height=110)
+    r = aep.run_aep(lay, ts, t, cfg, g, 1.2)
+    s = r.summary
+    assert np.allclose(r.flow_factors, 1)
+    # bruta = curva de potencia sobre la serie
+    gross = t.power(ts.ws.to_numpy(), 1.2).mean() * 8766 / 1e6 * 8
+    assert s["AEP bruta [GWh]"] == pytest.approx(gross, rel=0.01)
+    assert 0 < s["Pérdida por estelas [%]"] < 20
+    assert s["AEP P90 (10 años) [GWh]"] < s["AEP neta P50 [GWh]"]
+    cfg0 = aep.SimConfig(hub_height=110, wake_model="none")
+    assert aep.run_aep(lay, ts, t, cfg0, g, 1.2).summary["Pérdida por estelas [%]"] == pytest.approx(0, abs=1e-9)
+
+
+def test_air_density_altiplano():
+    m = met.MetData(pd.DataFrame({"ws_100": [8.0]}, index=pd.DatetimeIndex(["2020-01-01"], tz="UTC")), 23, -102, "x")
+    rho = climate.air_density(m, 2300, 100)
+    assert 0.9 < rho < 1.0
