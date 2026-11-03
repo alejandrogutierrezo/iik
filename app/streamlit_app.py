@@ -355,14 +355,17 @@ with tabs[1]:
                     y0 = st.number_input("Año inicial", 1981 if "NASA" not in src else 2001, 2025, 2005)
             with c4:
                 if is_wtk:
-                    y1 = st.number_input("Año final", 2007, 2014, 2014)
+                    y1 = st.number_input("Año final", 2007, 2014, 2013,
+                                         help="2014 está en otra versión del archivo: requiere indexarlo aparte y "
+                                              "descarga ~4 veces más datos.")
                 else:
                     y1 = st.number_input("Año final", 1981, 2025, 2024)
             wtk_gid = None
             if is_wtk:
                 st.caption("Modelo de mesoescala WRF (3Tier/Vaisala para el NREL), malla de ~2 km, horario, 10–200 m. "
                            "Resuelve mucho mejor que ERA5 los pasos de montaña, cañones y brisas. Se descargan solo los "
-                           "bloques del punto elegido (~40 MB por año; 2014 ~160 MB). Datos: NREL, AWS Open Data.")
+                           "bloques del punto elegido (~40 MB por año; 2014 ~160 MB). La primera descarga de un punto indexa el "
+                           "archivo (unos minutos); después es mucho más rápida. Datos: NREL, AWS Open Data.")
                 if st.button("Buscar puntos de malla cercanos"):
                     with st.spinner("Leyendo la malla del WIND Toolkit…"):
                         try:
@@ -390,9 +393,10 @@ with tabs[1]:
                     wtk_gid = int(pts.gid.iloc[labels.index(sel)])
                     hh = min(wtk.HEIGHTS, key=lambda z: abs(z - float(SS.hub_height)))
                     if st.button(f"Comparar velocidad media de los {len(pts)} puntos (año 2013, {hh} m, ~30 MB)"):
-                        with st.spinner("Descargando un año de los puntos cercanos…"):
+                        cbar = st.progress(0.0, text="Comparando puntos…")
+                        if True:
                             try:
-                                cmp_ = wtk.compare_points(pts.gid.tolist(), 2013, hh)
+                                cmp_ = wtk.compare_points(pts.gid.tolist(), 2013, hh, progress=progress_cb(cbar))
                                 SS.wtk_points = pts = pts.drop(columns=[c for c in pts if c.startswith("v_media")]
                                                                ).merge(cmp_, on="gid")
                             except Exception as e:

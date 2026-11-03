@@ -14,10 +14,12 @@ National Dataset (WIND) Toolkit. Applied Energy 151: 355-366.
 """
 from __future__ import annotations
 
+import calendar
 import concurrent.futures as cf
 import json
 import os
 import threading
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -194,56 +196,6 @@ def _plausible(var: str, x: np.ndarray, attrs) -> bool:
     return float(np.mean((v < lo) | (v > hi))) < 0.01
 
 
-def _read_many(h, get_range, requests_: list[tuple[str, list[int]]], max_workers=12) -> dict:
-    """Series completas para varias (variable, gids), leyendo solo sus chunks, todos en paralelo.
-    Devuelve {(var, gid): ndarray crudo}."""
-    plan, jobs = {}, {}
-    stride = None
-    for var, gids in requests_:
-        d = h[var]
-        nt, _ = d.shape
-        ct, cs = d.chunks
-        plan[var] = (d, nt, ct, cs, gids)
-        if d.compression is not None:
-            continue
-        size = int(ct * cs * d.dtype.itemsize)
-        for c0 in sorted({(g // cs) * cs for g in gids}):
-            offs, st = _column_offsets(d, c0, stride)
-            stride = st or stride
-            for t0, off in zip(range(0, nt, ct), offs):
-                jobs[(var, t0, c0)] = (off, size)
-
-    def fetch(key):
-        d, nt, ct, cs, _ = plan[key[0]]
-        off, size = jobs[key]
-        return key, np.frombuffer(get_range(off, size), dtype=d.dtype).reshape(ct, cs)
-
-    with cf.ThreadPoolExecutor(max_workers) as ex:
-        blocks = dict(ex.map(fetch, list(jobs)))
-    out = {}
-    for var, (d, nt, ct, cs, gids) in plan.items():
-        for g in gids:
-            if d.compression is not None:  # no esperado en WTK: lectura normal (más lenta)
-                out[(var, g)] = d[:, g]
-                continue
-            c0 = (g // cs) * cs
-            col = np.concatenate([blocks[(var, t0, c0)][:, g - c0] for t0 in range(0, nt, ct)])[:nt]
-            if not _plausible(var, col, d.attrs):  # patrón deducido incorrecto: lectura directa con h5py
-                col = d[:, g]
-            out[(var, g)] = col
-    return out
-
-
-def compare_points(gids, year: int = 2013, height: int = 100, src=None) -> pd.DataFrame:
-    """Velocidad media de un año en varios puntos de malla (para elegir el representativo)."""
-    h, get_range = _open(src or year_url(year))
-    var = f"windspeed_{height}m"
-    raw = _read_many(h, get_range, [(var, list(map(int, gids)))])
-    attrs = h[var].attrs
-    return pd.DataFrame({"gid": list(map(int, gids)),
-                         f"v_media_{year}_{height}m": [float(np.nanmean(_decode(raw[(var, int(g))], attrs))) for g in gids]})
-
-
 def _decode(raw: np.ndarray, attrs) -> np.ndarray:
     x = raw.astype(np.float64)
     fill = attrs.get("fill_value")
@@ -252,12 +204,199 @@ def _decode(raw: np.ndarray, attrs) -> np.ndarray:
     return x / float(attrs.get("scale_factor", 1.0))
 
 
-def download_wtk_mexico(lat: float, lon: float, start_year: int = 2007, end_year: int = 2014,
+# --------------------------------------------------------------------------
+# Lectura rápida: índice de chunks reutilizado entre años
+# --------------------------------------------------------------------------
+# Los archivos 2007–2013 (v1.0.0) tienen exactamente la misma estructura interna; solo los
+# años bisiestos son 480 bytes más largos (24 h más en time_index), y todo lo posterior queda
+# desplazado esa cantidad. Por eso basta buscar los chunks en el índice B-tree (lo lento) de un
+# año de referencia y aplicar a los demás el desplazamiento = diferencia de tamaño de archivo.
+REF_YEAR = {"v1.0.0": 2007, "v1.1.0": 2014}
+_LAYOUT_LOCK = threading.Lock()
+
+
+def _version(y: int) -> str:
+    return "v1.1.0" if y >= 2014 else "v1.0.0"
+
+
+class _Src:
+    """Archivo WTK remoto (URL) o local (pruebas): tamaño, lectura de rangos y apertura con h5py."""
+
+    _sessions: dict = {}
+
+    def __init__(self, src):
+        self.src = str(src)
+        self.remote = self.src.startswith(("http://", "https://"))
+        if not self.remote:
+            self._fh, self._lock = open(self.src, "rb"), threading.Lock()
+
+    @property
+    def ses(self):
+        tid = threading.get_ident()
+        if tid not in self._sessions:
+            sess = requests.Session()
+            sess.headers.update(UA)
+            sess.mount("https://", requests.adapters.HTTPAdapter(pool_maxsize=4, max_retries=3))
+            self._sessions[tid] = sess
+        return self._sessions[tid]
+
+    def size(self) -> int:
+        if not self.remote:
+            return os.path.getsize(self.src)
+        r = self.ses.head(self.src, timeout=60)
+        if r.status_code != 200:
+            raise DownloadError(f"No se pudo abrir {self.src} (HTTP {r.status_code}).")
+        return int(r.headers["Content-Length"])
+
+    def get_range(self, start: int, length: int) -> bytes:
+        if not self.remote:
+            with self._lock:
+                self._fh.seek(start)
+                return self._fh.read(length)
+        for attempt in range(3):
+            try:
+                r = self.ses.get(self.src, headers={"Range": f"bytes={start}-{start + length - 1}"}, timeout=120)
+                if r.status_code in (200, 206) and len(r.content) == length:
+                    return r.content
+            except requests.RequestException:
+                if attempt == 2:
+                    raise
+        raise DownloadError(f"Lectura parcial fallida en {self.src} (HTTP {r.status_code}).")
+
+    def h5(self):
+        return _open(self.src)
+
+
+def _layout_path() -> Path:
+    return CACHE_DIR / "wtk_layout.json"
+
+
+def _load_layouts() -> dict:
+    p = _layout_path()
+    try:
+        return json.loads(p.read_text()) if p.exists() else {}
+    except Exception:
+        return {}
+
+
+def _save_layout(key: str, value: dict):
+    with _LAYOUT_LOCK:
+        lay = _load_layouts()
+        lay[key] = value
+        p = _layout_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(lay))
+
+
+def _column_layout(ref: _Src, var: str, gid: int, stride_hint=None) -> dict:
+    """Índice de chunks de la columna que contiene ``gid`` en el archivo de referencia (con caché)."""
+    lay = _load_layouts()
+    shape_key = f"{ref.src}|{var}|chunks"
+    if shape_key in lay:
+        cs = lay[shape_key][1]
+        key = f"{ref.src}|{var}|{(gid // cs) * cs}"
+        if key in lay:
+            return lay[key]
+    h, _ = ref.h5()
+    d = h[var]
+    ct, cs = d.chunks
+    c0 = (gid // cs) * cs
+    key = f"{ref.src}|{var}|{c0}"
+    if d.compression is not None:
+        raise DownloadError("Formato WTK inesperado (datos comprimidos).")
+    offs, stride = _column_offsets(d, c0, stride_hint)
+    value = {"offs": [int(o) for o in offs], "ct": int(ct), "cs": int(cs), "c0": int(c0), "dtype": d.dtype.str,
+             "scale": float(d.attrs.get("scale_factor", 1.0)),
+             "fill": None if d.attrs.get("fill_value") is None else int(d.attrs["fill_value"]),
+             "ref_size": ref.size(), "nt_ref": int(d.shape[0]), "stride": stride}
+    _save_layout(shape_key, [int(ct), int(cs)])
+    _save_layout(key, value)
+    return value
+
+
+def _nt(year: int) -> int:
+    return 8784 if (calendar.isleap(year) and _version(year) == "v1.0.0") else 8760
+
+
+def _fetch_columns(src_for_year, years, variables, gids, progress: ProgressCb = None, max_workers=12) -> dict:
+    """{(año, var, gid): serie decodificada}, descargando solo los chunks necesarios (en paralelo)."""
+    gids = [int(g) for g in np.atleast_1d(gids)]
+    versions = sorted({_version(y) for y in years})
+    refs = {ver: _Src(src_for_year(REF_YEAR[ver])) for ver in versions}
+    layouts, stride = {}, None
+    steps = [(ver, var, g) for ver in versions for var in variables for g in gids]
+    for k, (ver, var, g) in enumerate(steps):
+        if progress:
+            progress(0.15 * k / len(steps), f"Indexando bloques de {var}; solo la primera vez para este punto, "
+                                            "puede tardar unos minutos…")
+        layouts[(ver, var, g)] = lay = _column_layout(refs[ver], var, g, stride)
+        stride = lay.get("stride") or stride
+    srcs = {y: refs[_version(y)] if src_for_year(y) == refs[_version(y)].src else _Src(src_for_year(y)) for y in years}
+    sizes = {y: srcs[y].size() for y in years}
+    jobs = {}
+    for y in years:
+        for var in variables:
+            for g in gids:
+                lay = layouts[(_version(y), var, g)]
+                n_chunks = -(-_nt(y) // lay["ct"])
+                if n_chunks != len(lay["offs"]):
+                    raise DownloadError(f"Estructura WTK inesperada en {y} ({var}).")
+                delta = sizes[y] - lay["ref_size"]
+                for i in range(n_chunks):
+                    jobs[(y, var, lay["c0"], i)] = (lay["offs"][i] + delta, lay)
+    nbytes = sum(lay["ct"] * lay["cs"] * np.dtype(lay["dtype"]).itemsize for _, lay in jobs.values())
+    def fetch(key):
+        off, lay = jobs[key]
+        size = lay["ct"] * lay["cs"] * np.dtype(lay["dtype"]).itemsize
+        blk = np.frombuffer(srcs[key[0]].get_range(off, size), dtype=lay["dtype"]).reshape(lay["ct"], lay["cs"])
+        return {g: blk[:, g - lay["c0"]].copy() for g in gids if lay["c0"] <= g < lay["c0"] + lay["cs"]}
+
+    parts = {}
+    with cf.ThreadPoolExecutor(max_workers) as ex:  # el avance se informa desde el hilo principal (Streamlit)
+        futs = {ex.submit(fetch, k): k for k in jobs}
+        for n, fut in enumerate(cf.as_completed(futs), 1):
+            parts[futs[fut]] = fut.result()
+            if progress:
+                progress(0.15 + 0.85 * n / len(jobs),
+                         f"Descargando bloques {n}/{len(jobs)} ({nbytes * n / len(jobs) / 1e6:.0f} de "
+                         f"{nbytes / 1e6:.0f} MB)…")
+    out = {}
+    for y in years:
+        for var in variables:
+            for g in gids:
+                lay = layouts[(_version(y), var, g)]
+                n_chunks = -(-_nt(y) // lay["ct"])
+                raw = np.concatenate([parts[(y, var, lay["c0"], i)][g] for i in range(n_chunks)])[:_nt(y)]
+                attrs = {"scale_factor": lay["scale"], "fill_value": lay["fill"]}
+                if not _plausible(var, raw, attrs):  # índice no aplicable a este año: lectura directa (lenta)
+                    h, _ = srcs[y].h5()
+                    raw = h[var][:, g]
+                out[(y, var, g)] = _decode(raw, attrs)
+    return out
+
+
+def compare_points(gids, year: int = 2013, height: int = 100, src=None, progress: ProgressCb = None
+                   ) -> pd.DataFrame:
+    """Velocidad media de un año en varios puntos de malla (para elegir el representativo)."""
+    src_for_year = (lambda y: src) if src else year_url
+    var = f"windspeed_{height}m"
+    gids = [int(g) for g in gids]
+    got = _fetch_columns(src_for_year, [year], [var], gids, progress)
+    return pd.DataFrame({"gid": gids, f"v_media_{year}_{height}m": [float(np.nanmean(got[(year, var, g)])) for g in gids]})
+
+
+def _point_meta(src, gid: int) -> dict:
+    h, _ = _open(src)
+    m = h["meta"][gid]
+    return {"lat": float(m["latitude"]), "lon": float(m["longitude"]), "elevation": float(m["elevation"])}
+
+
+def download_wtk_mexico(lat: float, lon: float, start_year: int = 2007, end_year: int = 2013,
                         hub_height: float = 100.0, gid: int | None = None, progress: ProgressCb = None,
                         use_cache: bool = True, src_for_year=None) -> MetData:
     """Serie horaria WTK-México en el punto de malla ``gid`` (o el más cercano a lat/lon).
 
-    Descarga velocidad en dos alturas alrededor del buje, dirección en la más cercana,
+    Descarga velocidad en dos alturas alrededor del buje, dirección en la superior,
     y T2m / presión superficial del primer año (para la densidad del aire).
     """
     src_for_year = src_for_year or year_url
@@ -269,43 +408,65 @@ def download_wtk_mexico(lat: float, lon: float, start_year: int = 2007, end_year
     h_dir = h_hi  # la cizalladura por sector usa la dirección de la altura superior
     if gid is None:
         gid = int(nearest_points(lat, lon, 1, src=src_for_year(years[0])).gid.iloc[0])
-    variables = {f"windspeed_{h_lo}m": f"ws_{h_lo}", f"windspeed_{h_hi}m": f"ws_{h_hi}",
-                 f"winddirection_{h_dir}m": f"wd_{h_dir}", "temperature_2m": "t2m", "pressure_0m": "ps"}
-    frames, glat, glon, gelev = [], lat, lon, None
-    for k, y in enumerate(years):
-        if progress:
-            progress(k / len(years), f"Descargando WIND Toolkit {y} (punto {gid})…")
-        cpath = CACHE_DIR / f"wtk_mexico_{gid}_{y}_{h_lo}_{h_hi}{'_tp' if k == 0 else ''}.csv.gz"
-        if use_cache and cpath.exists():
-            df = pd.read_csv(cpath, index_col=0, parse_dates=True)
-            df.index = pd.DatetimeIndex(df.index, tz="UTC") if df.index.tz is None else df.index
-            meta = json.loads(cpath.with_suffix(".json").read_text())
+    wind_vars = {f"windspeed_{h_lo}m": f"ws_{h_lo}", f"windspeed_{h_hi}m": f"ws_{h_hi}",
+                 f"winddirection_{h_dir}m": f"wd_{h_dir}"}
+    tp_vars = {"temperature_2m": "t2m", "pressure_0m": "ps"}
+    cpath = lambda y, tp: CACHE_DIR / f"wtk_mexico_{gid}_{y}_{h_lo}_{h_hi}{'_tp' if tp else ''}.csv.gz"  # noqa: E731
+    mpath = CACHE_DIR / f"wtk_mexico_{gid}_meta.json"
+    frames = {}
+    todo = [y for y in years if not (use_cache and cpath(y, False).exists())]
+    tp_year = years[0]
+    need_tp = not (use_cache and cpath(tp_year, True).exists())
+    try:
+        if todo or need_tp:
+            got = {}
+            # T/p solo para el primer año; el viento para todos los años pendientes
+            if todo:
+                got.update(_fetch_columns(src_for_year, todo, list(wind_vars), [gid], progress))
+            if need_tp:
+                if progress:
+                    progress(0.99, "Temperatura y presión (densidad del aire)…")
+                got.update(_fetch_columns(src_for_year, [tp_year], list(tp_vars), [gid], None))
+            for y in set(todo) | ({tp_year} if need_tp else set()):
+                idx = pd.date_range(f"{y}-01-01", periods=_nt(y), freq="h", tz="UTC")
+                if y in todo:
+                    dfw = pd.DataFrame({wind_vars[v]: got[(y, v, gid)] for v in wind_vars}, index=idx)
+                    if use_cache:
+                        cpath(y, False).parent.mkdir(parents=True, exist_ok=True)
+                        dfw.to_csv(cpath(y, False))
+                    frames[y] = dfw
+                if need_tp and y == tp_year:
+                    dft = pd.DataFrame({tp_vars[v]: got[(y, v, gid)] for v in tp_vars}, index=idx)
+                    dft["ps"] = dft["ps"] / 100.0  # Pa -> hPa
+                    if use_cache:
+                        dft.to_csv(cpath(y, True))
+                    frames[("tp", y)] = dft
+        if use_cache and mpath.exists():
+            meta = json.loads(mpath.read_text())
         else:
-            try:
-                h, get_range = _open(src_for_year(y))
-                ti = pd.to_datetime([t.decode() if isinstance(t, bytes) else t for t in h["time_index"][:]], utc=True)
-                wanted = [v for v in variables if k == 0 or v not in ("temperature_2m", "pressure_0m")]
-                raw = _read_many(h, get_range, [(v, [gid]) for v in wanted])
-                cols = {variables[v]: _decode(raw[(v, gid)], h[v].attrs) for v in wanted}
-                df = pd.DataFrame(cols, index=ti)
-                if "ps" in df:  # T y presión solo del primer año (bastan para la densidad media)
-                    df["ps"] = df["ps"] / 100.0  # Pa -> hPa
-                m = h["meta"][gid]
-                meta = {"lat": float(m["latitude"]), "lon": float(m["longitude"]), "elevation": float(m["elevation"])}
-            except DownloadError:
-                raise
-            except Exception as e:  # red, proxy, etc.
-                raise DownloadError(f"WIND Toolkit {y}: {type(e).__name__}: {e}") from e
+            meta = _point_meta(src_for_year(years[0]), gid)
             if use_cache:
-                cpath.parent.mkdir(parents=True, exist_ok=True)
-                df.to_csv(cpath)
-                cpath.with_suffix(".json").write_text(json.dumps(meta))
-        glat, glon, gelev = meta["lat"], meta["lon"], meta["elevation"]
-        frames.append(df)
-    df = pd.concat(frames).sort_index()
-    df = df[~df.index.duplicated()].dropna(how="all")
+                mpath.parent.mkdir(parents=True, exist_ok=True)
+                mpath.write_text(json.dumps(meta))
+    except DownloadError:
+        raise
+    except Exception as e:  # red, proxy, etc.
+        raise DownloadError(f"WIND Toolkit: {type(e).__name__}: {e}") from e
+
+    def _read(p):
+        df = pd.read_csv(p, index_col=0, parse_dates=True)
+        df.index = pd.DatetimeIndex(df.index, tz="UTC") if df.index.tz is None else df.index
+        return df
+
+    wind = pd.concat([frames[y] if y in frames else _read(cpath(y, False)) for y in years]).sort_index()
+    tp = frames.get(("tp", tp_year))
+    if tp is None:
+        tp = _read(cpath(tp_year, True))
+    df = wind.join(tp, how="left")
+    df = df[~df.index.duplicated()].dropna(how="all", subset=list(wind_vars.values()))
     if progress:
         progress(1.0, "WIND Toolkit descargado")
+    glat, glon, gelev = meta["lat"], meta["lon"], meta["elevation"]
     # La elevación de "meta" es la del terreno real en el punto, no la del terreno suavizado del WRF; para
     # corregir la densidad se usa la altura equivalente a la presión superficial media (atmósfera estándar).
     z_eff = gelev

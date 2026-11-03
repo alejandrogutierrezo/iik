@@ -218,7 +218,7 @@ def test_download_errors_are_explained():
     assert g.call_count == 1  # un error de parámetros no se reintenta
 
 
-def _fake_wtk_file(path, n_sites=50, nt=8760):
+def _fake_wtk_file(path, n_sites=50, nt=8760, extra=0.0):
     import h5py
 
     rng = np.random.default_rng(1)
@@ -233,7 +233,7 @@ def _fake_wtk_file(path, n_sites=50, nt=8760):
         h["meta"] = meta
         h["time_index"] = np.array(pd.date_range("2010-01-01", periods=nt, freq="h").strftime("%Y-%m-%d %H:%M:%S"),
                                    dtype="S20")
-        base = 6 + 2 * np.sin(np.arange(nt) / 24 * 2 * np.pi)[:, None] + 0.01 * np.arange(n_sites)[None, :]
+        base = 6 + extra + 2 * np.sin(np.arange(nt) / 24 * 2 * np.pi)[:, None] + 0.01 * np.arange(n_sites)[None, :]
         for hh, fac in ((80, 0.97), (100, 1.0)):
             d = h.create_dataset(f"windspeed_{hh}m", data=np.round(base * fac * 100).astype("<u2"), chunks=(1344, 16))
             d.attrs["scale_factor"], d.attrs["fill_value"] = 100.0, 65535
@@ -269,6 +269,21 @@ def test_wtk_reader(tmp_path, monkeypatch):
     assert m2.df["ws_80"].equals(m.df["ws_80"])
     with pytest.raises(ValueError):
         wtk.download_wtk_mexico(25.6, -100.6, 2005, 2006, 85, gid=17)
+
+    # el índice de chunks del año de referencia (2007) se reutiliza en los demás años sin buscar en el B-tree
+    f07, f09 = tmp_path / "wtk_2007.h5", tmp_path / "wtk_2009.h5"
+    _fake_wtk_file(f07)
+    _fake_wtk_file(f09, extra=1.0)
+    files = {2007: str(f07), 2009: str(f09)}
+    calls = []
+    orig = wtk._column_offsets
+    monkeypatch.setattr(wtk, "_column_offsets", lambda *a, **k: calls.append(1) or orig(*a, **k))
+    m3 = wtk.download_wtk_mexico(25.6, -100.6, 2009, 2009, 85, gid=5, src_for_year=files.get)
+    assert m3.df["ws_100"].mean() == pytest.approx(7.05, abs=0.01)  # datos de 2009, índice de 2007
+    n_first = len(calls)
+    m4 = wtk.download_wtk_mexico(25.6, -100.6, 2009, 2009, 85, gid=6, src_for_year=files.get, use_cache=False)
+    assert len(calls) == n_first  # misma columna de chunks: sin búsquedas nuevas
+    assert m4.df["ws_100"].mean() == pytest.approx(7.06, abs=0.01)
 
 
 def test_gwa_sampling_and_calibration(tmp_path, monkeypatch):
