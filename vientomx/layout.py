@@ -144,6 +144,54 @@ def grid_layout(lat_c, lon_c, rows, cols, spacing_row_D, spacing_col_D, rotor_d,
     return pd.DataFrame({"id": [f"{prefix}{i+1:02d}" for i in range(len(pts))], "lat": lat, "lon": lon})
 
 
+def distance_m(lat1, lon1, lat2, lon2):
+    """Distancia de gran círculo [m] (haversine); acepta arreglos."""
+    R = 6371008.8
+    p1, p2 = np.radians(lat1), np.radians(lat2)
+    dphi, dlmb = p2 - p1, np.radians(np.asarray(lon2) - np.asarray(lon1))
+    a = np.sin(dphi / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dlmb / 2) ** 2
+    return 2 * R * np.arcsin(np.sqrt(a))
+
+
+def nearest(df: pd.DataFrame | None, lat: float, lon: float):
+    """(índice, distancia_m) de la turbina más cercana, o (None, inf) si no hay."""
+    if df is None or df.empty:
+        return None, float("inf")
+    d = distance_m(lat, lon, df.lat.to_numpy(float), df.lon.to_numpy(float))
+    i = int(np.argmin(d))
+    return df.index[i], float(d[i])
+
+
+def next_id(df: pd.DataFrame | None, prefix="WTG") -> str:
+    used = set() if df is None else set(df["id"].astype(str))
+    n = len(used) + 1
+    while f"{prefix}{n:02d}" in used:
+        n += 1
+    return f"{prefix}{n:02d}"
+
+
+def add_turbine(df: pd.DataFrame | None, lat: float, lon: float, tid: str | None = None, **extra) -> pd.DataFrame:
+    """Agrega una turbina al layout (crea el layout si ``df`` es None)."""
+    if tid is None or (df is not None and tid in set(df["id"].astype(str))):
+        tid = next_id(df)
+    row = pd.DataFrame([{"id": tid, "lat": float(lat), "lon": float(lon), **extra}])
+    if df is None or df.empty:
+        return row
+    return pd.concat([df, row], ignore_index=True)
+
+
+def remove_turbine(df: pd.DataFrame, idx) -> pd.DataFrame:
+    return df.drop(index=idx).reset_index(drop=True)
+
+
+def move_turbine(df: pd.DataFrame, idx, lat: float, lon: float) -> pd.DataFrame:
+    df = df.copy()
+    df.loc[idx, ["lat", "lon"]] = [float(lat), float(lon)]
+    if "osm_id" in df:  # ya no coincide con la posición mapeada en OSM
+        df.loc[idx, "osm_id"] = None
+    return df
+
+
 # Regiones eólicas de México para ejemplos
 MEXICO_SITES = {
     "La Ventosa, Oaxaca (Istmo de Tehuantepec)": (16.55, -94.95),
@@ -155,4 +203,5 @@ MEXICO_SITES = {
     "Dzilam de Bravo, Yucatán": (21.35, -88.85),
     "Santiago Eólico, Guanajuato/SLP": (22.10, -100.90),
     "Puebla - Esperanza": (18.85, -97.40),
+    "Santa Catarina, Nuevo León (autopista Saltillo–Monterrey, aprox.)": (25.60, -100.70),
 }

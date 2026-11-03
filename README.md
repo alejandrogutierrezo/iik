@@ -6,7 +6,9 @@ parques eólicos, pensada para México y para estudiantes universitarios.**
 Interfaz web local en español (Streamlit) sobre un motor en Python. En seis
 pasos se pasa de una lista de coordenadas a la AEP P50/P90 del parque:
 
-1. **Sitio y layout**: carga de coordenadas desde CSV, Excel o Google Earth
+1. **Sitio y layout**: selección de turbinas con clic sobre un mapa de
+   OpenStreetMap (colocar, mover, borrar) e importación de los aerogeneradores
+   que ya están mapeados en OSM para parques construidos; carga de coordenadas desde CSV, Excel o Google Earth
    (KML/KMZ), en lat/lon o UTM; o un layout rectangular generado en una de las
    regiones eólicas de México (Istmo, Tamaulipas, Nuevo León, La Rumorosa,
    altiplano, Yucatán…).
@@ -67,6 +69,25 @@ WTG02,16.5530,-94.9500,110
 También se reconocen `nombre/latitud/longitud` y `x/y`, `este/norte` (UTM, se
 indica la zona: 11 en Baja California a 16 en Yucatán). Separador coma, punto y
 coma o tabulador. KML/KMZ: cada Placemark de tipo punto es una turbina.
+
+### Seleccionar turbinas en el mapa (OpenStreetMap)
+
+En el paso 1, modo **Seleccionar en el mapa**:
+
+* **Buscar turbinas de OSM aquí** consulta la Overpass API y muestra en naranja
+  los nodos `power=generator` + `generator:source=wind` del área visible (el
+  icono de aerogenerador de openstreetmap.org). Se toman con un clic, o todas con
+  **Usar todas las de OSM**. Se conservan `ref`/`name` como id, y la altura de
+  buje si está etiquetada (`height:hub`); la columna `osm_id` identifica su origen.
+* Con **Agregar / Mover / Borrar turbina** se edita el layout haciendo clic; las
+  coordenadas también se pueden corregir en la tabla.
+* El fondo **Satélite (Esri)** ayuda a verificar que las posiciones de OSM
+  coinciden con las torres reales; OSM es colaborativo y puede tener errores u
+  omisiones.
+* Si la red bloquea los servidores públicos de Overpass, defina
+  `VIENTOMX_OVERPASS_URL` con otro servidor.
+
+Datos de turbinas © colaboradores de OpenStreetMap, licencia ODbL.
 
 ## Fuentes de datos
 

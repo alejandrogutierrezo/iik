@@ -133,3 +133,50 @@ def test_air_density_altiplano():
     m = met.MetData(pd.DataFrame({"ws_100": [8.0]}, index=pd.DatetimeIndex(["2020-01-01"], tz="UTC")), 23, -102, "x")
     rho = climate.air_density(m, 2300, 100)
     assert 0.9 < rho < 1.0
+
+
+def test_osm_parse_and_layout_editing():
+    from unittest import mock
+
+    from vientomx import osm
+
+    data = {"elements": [
+        {"type": "node", "id": 101, "lat": 25.6101, "lon": -100.6801,
+         "tags": {"power": "generator", "generator:source": "wind", "ref": "SC-01", "manufacturer": "Gamesa",
+                  "model": "G90", "generator:output:electricity": "2 MW", "height:hub": "78 m",
+                  "rotor:diameter": "90"}},
+        {"type": "node", "id": 102, "lat": 25.6050, "lon": -100.6790,
+         "tags": {"power": "generator", "generator:source": "wind", "generator:output:electricity": "2000 kW"}},
+        {"type": "way", "id": 7, "center": {"lat": 25.60, "lon": -100.678},
+         "tags": {"power": "generator", "generator:source": "wind"}},
+        {"type": "node", "id": 101, "lat": 25.6101, "lon": -100.6801, "tags": {}},  # duplicado
+    ]}
+    df = osm.parse_overpass(data)
+    assert len(df) == 3 and df.osm_id.iloc[0] == "n101"
+    assert df.potencia_kw.tolist()[:2] == [2000.0, 2000.0]
+    assert df.altura_buje_m.iloc[0] == 78 and df.diametro_rotor_m.iloc[0] == 90
+    lay = osm.to_layout(df)
+    assert lay["id"].tolist()[0] == "SC-01" and lay["id"].nunique() == 3 and "osm_id" in lay
+
+    q = osm.build_query(25.5, -100.8, 25.7, -100.6)
+    assert '"generator:source"="wind"' in q and "(25.500000,-100.800000,25.700000,-100.600000)" in q
+    with pytest.raises(ValueError):
+        osm.fetch_wind_turbines(20, -110, 25, -100)  # área demasiado grande
+
+    resp = mock.Mock(json=lambda: data, raise_for_status=lambda: None)
+    with mock.patch("vientomx.osm.requests.post", side_effect=[OSError("bloqueado"), resp]) as post:
+        got = osm.fetch_wind_turbines(25.59, -100.69, 25.62, -100.67)
+    assert len(got) == 3 and post.call_count == 2  # se usa el servidor espejo
+
+    # edición manual del layout
+    L = layout.add_turbine(None, 25.61, -100.68)
+    L = layout.add_turbine(L, 25.62, -100.68)
+    L = layout.add_turbine(L, 25.63, -100.68, "WTG01")  # id repetido -> se renombra
+    assert L["id"].tolist() == ["WTG01", "WTG02", "WTG03"]
+    i, d = layout.nearest(L, 25.6201, -100.68)
+    assert i == 1 and d == pytest.approx(11.1, abs=0.2)
+    L = layout.move_turbine(L, i, 25.625, -100.681)
+    assert L.loc[1, "lat"] == 25.625
+    L = layout.remove_turbine(L, 0)
+    assert L["id"].tolist() == ["WTG02", "WTG03"]
+    assert layout.distance_m(0, 0, 1, 0) == pytest.approx(111195, rel=1e-3)

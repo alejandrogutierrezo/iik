@@ -19,6 +19,8 @@ dependencies = [
   "openpyxl>=3.1",
   "streamlit>=1.35",
   "plotly>=5.20",
+  "folium>=0.15",
+  "streamlit-folium>=0.20",
   "turbine-models>=0.2",
   "windpowerlib>=0.2.2",
 ]
