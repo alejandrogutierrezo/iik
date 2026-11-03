@@ -75,8 +75,12 @@ coma o tabulador. KML/KMZ: cada Placemark de tipo punto es una turbina.
 En el paso 1, modo **Seleccionar en el mapa**:
 
 * **Buscar turbinas de OSM aquí** consulta la Overpass API y muestra en naranja
-  los nodos `power=generator` + `generator:source=wind` del área visible (el
-  icono de aerogenerador de openstreetmap.org). Se toman con un clic, o todas con
+  los nodos `power=generator` + `generator:source=wind` (o
+  `generator:method=wind_turbine`) del área visible (el icono de aerogenerador de
+  openstreetmap.org). La consulta va a cuatro servidores espejo en paralelo y se
+  toma la primera respuesta válida; nunca espera más de 40 s. Si la vista es muy
+  amplia busca ±12 km alrededor del centro, y si el parque solo está mapeado como
+  polígono (`power=plant`) lo avisa. Se toman con un clic, o todas con
   **Usar todas las de OSM**. Se conservan `ref`/`name` como id, y la altura de
   buje si está etiquetada (`height:hub`); la columna `osm_id` identifica su origen.
 * Con **Agregar / Mover / Borrar turbina** se edita el layout haciendo clic; las
@@ -84,8 +88,12 @@ En el paso 1, modo **Seleccionar en el mapa**:
 * El fondo **Satélite (Esri)** ayuda a verificar que las posiciones de OSM
   coinciden con las torres reales; OSM es colaborativo y puede tener errores u
   omisiones.
-* Si la red bloquea los servidores públicos de Overpass, defina
-  `VIENTOMX_OVERPASS_URL` con otro servidor.
+* Si la red bloquea los servidores públicos de Overpass, exporte las turbinas
+  como GeoJSON desde [overpass-turbo.eu](https://overpass-turbo.eu) y súbalo en
+  el recuadro «¿Overpass no responde…?», o defina `VIENTOMX_OVERPASS_URL` con
+  otro servidor.
+* Los mapas de layout y de resultados se centran y ajustan el zoom
+  automáticamente al parque.
 
 Datos de turbinas © colaboradores de OpenStreetMap, licencia ODbL.
 

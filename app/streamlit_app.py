@@ -23,7 +23,8 @@ st.set_page_config(page_title="VientoMX · Evaluación de recurso eólico", page
 SS = st.session_state
 for k, v in dict(layout=None, met=None, met_reanalysis=None, ref_latlon=None, grid=None, turbine=None,
                  hub_height=100.0, results=None, cfg=None, calib=None, mcp_info=None,
-                 osm_turbines=None, map_center=None, map_zoom=None, map_bounds=None, move_sel=None,
+                 osm_turbines=None, osm_plants=None, osm_msg=None, map_center=None, map_zoom=None, map_bounds=None,
+                 move_sel=None,
                  prev_obj_click=None, prev_map_click=None, layout_ver=0, calib_h=None, calib_ref=None,
                  wtk_points=None, gwa_info=None).items():
     SS.setdefault(k, v)
@@ -51,6 +52,17 @@ def ok(flag):
     return "✅" if flag else "⬜"
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _osm_search(south, west, north, east):
+    return osm.fetch_osm(south, west, north, east)
+
+
+def _fit(lat, lon):
+    """Centro y zoom del mapa folium (Leaflet, mosaicos de 256 px) que encuadran las turbinas."""
+    (clat, clon), z = layout.map_view(lat, lon, width_px=900, height_px=560, tile_px=256, max_zoom=16)
+    return [clat, clon], int(z)
+
+
 def _map_editor():
     """Mapa interactivo (folium): colocar, mover y borrar turbinas con clic, e importar las de OSM."""
     import folium
@@ -75,8 +87,7 @@ def _map_editor():
         if st.button("Centrar mapa", disabled=glat is None):
             SS.map_center, SS.map_zoom = [glat, glon], 14
         if st.button("Centrar en layout", disabled=SS.layout is None or SS.layout.empty):
-            SS.map_center = [float(SS.layout.lat.mean()), float(SS.layout.lon.mean())]
-            SS.map_zoom = 14
+            SS.map_center, SS.map_zoom = _fit(SS.layout.lat, SS.layout.lon)
 
     action = st.radio("Al hacer clic en el mapa:", ["➕ Agregar turbina", "✋ Mover turbina", "🗑️ Borrar turbina",
                                                    "🔍 Solo navegar"], horizontal=True, key="map_action",
@@ -95,20 +106,66 @@ def _map_editor():
             if not bnd:
                 st.warning("Mueva o acerque el mapa una vez para conocer el área visible.")
             else:
+                s_, w_, n_, e_ = bnd
+                note = ""
+                if (n_ - s_) * (e_ - w_) > 0.25:  # vista muy abierta: buscar ±12 km alrededor del centro
+                    s_, w_, n_, e_ = osm.bbox_around((s_ + n_) / 2, (w_ + e_) / 2, 12)
+                    note = " (vista muy amplia: se buscó en ±12 km alrededor del centro del mapa)"
                 try:
-                    with st.spinner("Consultando OpenStreetMap (Overpass)…"):
-                        SS.osm_turbines = osm.fetch_wind_turbines(*bnd)
-                    n = len(SS.osm_turbines)
-                    (st.success if n else st.info)(
-                        f"{n} aerogeneradores encontrados en OSM." if n else
-                        "No hay aerogeneradores mapeados en OSM en esta vista. Puede colocarlos manualmente.")
+                    with st.spinner(f"Consultando OpenStreetMap (Overpass, máx. {osm.DEADLINE_S} s)…"):
+                        tur, plants = _osm_search(round(s_, 4), round(w_, 4), round(n_, 4), round(e_, 4))
+                    SS.osm_turbines, SS.osm_plants = tur, plants
+                    n = len(tur)
+                    if n:
+                        SS.osm_msg = ("success", f"{n} aerogeneradores encontrados en OSM{note}. Aparecen como "
+                                                 "puntos naranjas: clic en uno para usarlo, o «Usar todas».")
+                        SS.map_center, SS.map_zoom = _fit(tur.lat, tur.lon)
+                    else:
+                        txt = "No hay aerogeneradores individuales mapeados en OSM en esta zona" + note + "."
+                        if len(plants):
+                            names = ", ".join(str(x) for x in plants.nombre.fillna("(sin nombre)").head(5))
+                            txt += (f" Sí está mapeado el polígono del parque ({names}), pero sin las turbinas: "
+                                    "colóquelas con clic sobre el fondo **Satélite (Esri)**.")
+                        else:
+                            txt += " Colóquelas con clic sobre el fondo **Satélite (Esri)**."
+                        SS.osm_msg = ("info", txt)
                 except Exception as e:
-                    st.error(str(e))
+                    SS.osm_msg = ("error", str(e))
+                st.rerun()
+    if SS.get("osm_msg"):
+        kind, txt = SS.osm_msg
+        getattr(st, kind)(txt)
+    with st.expander("¿Overpass no responde en su red? Importar turbinas exportadas de overpass-turbo (GeoJSON)"):
+        st.markdown("1. Abra [overpass-turbo.eu](https://overpass-turbo.eu), navegue al parque y ejecute esta consulta. "
+                    "2. **Exportar → GeoJSON → descargar**. 3. Suba el archivo aquí.")
+        st.code('[out:json][timeout:25];\n(nwr["power"="generator"]["generator:source"="wind"]({{bbox}});\n'
+                ' nwr["power"="generator"]["generator:method"="wind_turbine"]({{bbox}}););\nout center;',
+                language="text")
+        gj = st.file_uploader("GeoJSON de overpass-turbo", type=["geojson", "json"], key="osm_gj")
+        if gj is not None and st.button("Cargar turbinas del GeoJSON"):
+            import json
+            try:
+                tur = osm.parse_geojson(json.loads(gj.getvalue()))
+                SS.osm_turbines = tur
+                SS.osm_msg = ("success" if len(tur) else "info",
+                              f"{len(tur)} aerogeneradores leídos del GeoJSON." if len(tur) else
+                              "El GeoJSON no contiene puntos de aerogeneradores.")
+                if len(tur):
+                    SS.map_center, SS.map_zoom = _fit(tur.lat, tur.lon)
+            except Exception as e:
+                SS.osm_msg = ("error", f"No se pudo leer el GeoJSON: {e}")
+            st.rerun()
     osm_df = SS.osm_turbines
     in_layout = set()
     if SS.layout is not None and "osm_id" in SS.layout:
         in_layout = set(SS.layout.osm_id.dropna().astype(str))
     pending = osm_df[~osm_df.osm_id.isin(in_layout)] if osm_df is not None and not osm_df.empty else None
+    if osm_df is not None and not osm_df.empty:
+        n_used = len(osm_df) - (len(pending) if pending is not None else 0)
+        with st.expander(f"Tabla de turbinas de OSM ({len(osm_df)}; {n_used} ya en el layout)"):
+            st.dataframe(osm_df.assign(en_layout=osm_df.osm_id.isin(in_layout)), hide_index=True,
+                         column_config={"lat": st.column_config.NumberColumn(format="%.6f"),
+                                        "lon": st.column_config.NumberColumn(format="%.6f")})
     with b2:
         if pending is not None and len(pending) and st.button(f"Usar todas las de OSM ({len(pending)})"):
             new = osm.to_layout(pending)
@@ -321,8 +378,9 @@ with tabs[0]:
                     dmin = cKDTree(xy).query(xy, k=2)[0][:, 1].min() / SS.turbine.rotor_diameter
                     (st.warning if dmin < 2 else st.caption)(f"Separación mínima entre turbinas: {dmin:.1f} D")
             else:
-                fig = px.scatter_map(SS.layout, lat="lat", lon="lon", hover_name="id", zoom=11, height=420,
-                                     map_style="open-street-map")
+                (clat, clon), zm = layout.map_view(SS.layout.lat, SS.layout.lon, height_px=420)
+                fig = px.scatter_map(SS.layout, lat="lat", lon="lon", hover_name="id", zoom=zm, height=420,
+                                     center=dict(lat=clat, lon=clon), map_style="open-street-map")
                 fig.update_traces(marker=dict(size=11, color="#1f77b4"))
                 fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
                 st.plotly_chart(fig)
@@ -825,11 +883,13 @@ with tabs[5]:
         with c1:
             color = st.radio("Colorear turbinas por", ["AEP neta P50 [MWh]", "Pérdida por estelas [%]", "U libre [m/s]",
                                                         "Factor terreno"], horizontal=True)
+            (clat, clon), zm = layout.map_view(r.per_turbine["Latitud"], r.per_turbine["Longitud"], height_px=450)
             fig = px.scatter_map(r.per_turbine, lat="Latitud", lon="Longitud", color=color, hover_name="ID",
                                  hover_data=["AEP neta P50 [MWh]", "Pérdida por estelas [%]", "U libre [m/s]"],
-                                 color_continuous_scale="Viridis", zoom=11, height=450, map_style="open-street-map")
+                                 color_continuous_scale="Viridis", zoom=zm, center=dict(lat=clat, lon=clon),
+                                 height=450, map_style="open-street-map")
             fig.update_traces(marker=dict(size=13))
-            fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
+            fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), uirevision=f"res-{SS.layout_ver}")
             st.plotly_chart(fig)
         with c2:
             st.dataframe(pd.DataFrame(list(s.items()), columns=["Concepto", "Valor"]).assign(
