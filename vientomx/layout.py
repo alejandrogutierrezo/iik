@@ -144,6 +144,13 @@ def grid_layout(lat_c, lon_c, rows, cols, spacing_row_D, spacing_col_D, rotor_d,
     return pd.DataFrame({"id": [f"{prefix}{i+1:02d}" for i in range(len(pts))], "lat": lat, "lon": lon})
 
 
+def wrap_lon(lon):
+    """Lleva longitudes a [-180, 180). El mapa web puede dar, p. ej., -460.6° (= -100.6° - 360°)
+    si se navegó por otra "copia" del mundo."""
+    w = (np.asarray(lon, dtype=float) + 180.0) % 360.0 - 180.0
+    return float(w) if np.ndim(w) == 0 else w
+
+
 def distance_m(lat1, lon1, lat2, lon2):
     """Distancia de gran círculo [m] (haversine); acepta arreglos."""
     R = 6371008.8
@@ -174,7 +181,7 @@ def add_turbine(df: pd.DataFrame | None, lat: float, lon: float, tid: str | None
     """Agrega una turbina al layout (crea el layout si ``df`` es None)."""
     if tid is None or (df is not None and tid in set(df["id"].astype(str))):
         tid = next_id(df)
-    row = pd.DataFrame([{"id": tid, "lat": float(lat), "lon": float(lon), **extra}])
+    row = pd.DataFrame([{"id": tid, "lat": float(lat), "lon": wrap_lon(lon), **extra}])
     if df is None or df.empty:
         return row
     return pd.concat([df, row], ignore_index=True)
@@ -186,7 +193,7 @@ def remove_turbine(df: pd.DataFrame, idx) -> pd.DataFrame:
 
 def move_turbine(df: pd.DataFrame, idx, lat: float, lon: float) -> pd.DataFrame:
     df = df.copy()
-    df.loc[idx, ["lat", "lon"]] = [float(lat), float(lon)]
+    df.loc[idx, ["lat", "lon"]] = [float(lat), wrap_lon(lon)]
     if "osm_id" in df:  # ya no coincide con la posición mapeada en OSM
         df.loc[idx, "osm_id"] = None
     return df

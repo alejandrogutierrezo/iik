@@ -27,6 +27,11 @@ for k, v in dict(layout=None, met=None, met_reanalysis=None, ref_latlon=None, gr
                  prev_obj_click=None, prev_map_click=None, layout_ver=0).items():
     SS.setdefault(k, v)
 
+# Longitudes fuera de [-180, 180) (p. ej. de clics en otra "copia" del mundo en el mapa) rompen las descargas
+if SS.layout is not None and not SS.layout.empty and (SS.layout.lon.abs() > 180).any():
+    SS.layout = SS.layout.assign(lon=layout.wrap_lon(SS.layout.lon.to_numpy(float)))
+    SS.layout_ver += 1
+
 COLORS = px.colors.sequential.Viridis
 
 
@@ -126,11 +131,12 @@ def _map_editor():
                                if SS.layout is not None and len(SS.layout) else [23.5, -102.0])
     zoom = SS.map_zoom or (14 if SS.layout is not None and len(SS.layout) else 5)
     if base.startswith("Sat"):
-        m = folium.Map(location=center, zoom_start=zoom, tiles=None, control_scale=True)
+        m = folium.Map(location=center, zoom_start=zoom, tiles=None, control_scale=True, world_copy_jump=True)
         folium.TileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
                          attr="Esri, Maxar, Earthstar Geographics", name="Satélite", max_zoom=19).add_to(m)
     else:
-        m = folium.Map(location=center, zoom_start=zoom, tiles="OpenStreetMap", control_scale=True, max_zoom=19)
+        m = folium.Map(location=center, zoom_start=zoom, tiles="OpenStreetMap", control_scale=True, max_zoom=19,
+                       world_copy_jump=True)
     fg = folium.FeatureGroup(name="turbinas")
     if pending is not None:
         for r in pending.itertuples(index=False):
@@ -143,13 +149,14 @@ def _map_editor():
             folium.CircleMarker([r.lat, r.lon], radius=8, color="#facc15" if sel else "#1e3a8a", weight=3 if sel else 2,
                                 fill=True, fill_color="#3b82f6", fill_opacity=0.9, tooltip=str(r["id"])).add_to(fg)
     out = st_folium(m, key="layout_map", height=560, use_container_width=True, center=center, zoom=zoom,
-                    feature_group_to_add=fg,
+                    feature_group_to_add=fg, wrap_longitude=True,
                     returned_objects=["last_clicked", "last_object_clicked", "bounds", "zoom"]) or {}
 
     bnd, z = out.get("bounds"), out.get("zoom")
     if bnd and bnd.get("_southWest") and bnd["_southWest"].get("lat") is not None:
         sw, ne = bnd["_southWest"], bnd["_northEast"]
-        SS.map_bounds = (sw["lat"], sw["lng"], ne["lat"], ne["lng"])
+        w, e = layout.wrap_lon(sw["lng"]), layout.wrap_lon(ne["lng"])
+        SS.map_bounds = (sw["lat"], w, ne["lat"], e) if w < e else None  # None si la vista cruza el antimeridiano
     z = z or zoom
 
     # ---- procesar el clic más reciente (sin repetir el mismo en cada rerun)
@@ -164,7 +171,7 @@ def _map_editor():
         if action.startswith("✋") and SS.move_sel is not None:
             st.caption(f"Turbina seleccionada: **{SS.layout.loc[SS.move_sel, 'id']}**. Haga clic en su nueva posición.")
         return
-    lat, lon = float(click["lat"]), float(click["lng"])
+    lat, lon = float(click["lat"]), layout.wrap_lon(click["lng"])
     snap = 14 * 156543.03 * np.cos(np.radians(lat)) / 2 ** z  # ~14 px en metros
     i_lay, d_lay = layout.nearest(SS.layout, lat, lon)
     if action.startswith("➕"):

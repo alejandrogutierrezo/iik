@@ -180,6 +180,12 @@ def test_osm_parse_and_layout_editing():
     L = layout.remove_turbine(L, 0)
     assert L["id"].tolist() == ["WTG02", "WTG03"]
     assert layout.distance_m(0, 0, 1, 0) == pytest.approx(111195, rel=1e-3)
+    # clic en otra "copia" del mundo del mapa web: -460.64° == -100.64°
+    assert layout.wrap_lon(-460.6405) == pytest.approx(-100.6405)
+    assert layout.wrap_lon(259.36) == pytest.approx(-100.64)
+    W = layout.add_turbine(None, 25.68, -460.6405)
+    assert W.lon.iloc[0] == pytest.approx(-100.6405)
+    assert layout.move_turbine(W, 0, 25.69, 619.36).lon.iloc[0] == pytest.approx(-100.64)
 
 
 def test_download_errors_are_explained():
