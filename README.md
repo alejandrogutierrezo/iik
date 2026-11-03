@@ -25,8 +25,9 @@ pasos se pasa de una lista de coordenadas a la AEP P50/P90 del parque:
 5. **Simulación**: orografía + rugosidad + estelas (Jensen o Gaussiano de
    Bastankhah) por dirección, corrección por densidad, pérdidas editables.
 6. **Resultados**: AEP bruta/neta por turbina, P50/P75/P90/P99, mapa de estelas,
-   perfil 12×24, producción por año, rosa de energía, exportación a Excel y
-   serie horaria CSV.
+   perfil 12×24, producción por año, rosa de energía, exportación a Excel,
+   serie horaria CSV y **reporte PDF** del estudio completo (configuración,
+   supuestos y advertencias de cada etapa, y resultados con tablas y gráficas).
 
 La fidelidad objetivo está **entre SAM y WAsP**. El detalle está en
 [`docs/metodo.md`](docs/metodo.md) (también visible en la pestaña *Método*).

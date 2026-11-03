@@ -16,7 +16,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vientomx import aep, climate, gwa, layout, met, osm, report, terrain, turbines, wtk  # noqa: E402
+from vientomx import aep, climate, gwa, layout, met, osm, pdf_report, report, terrain, turbines, wtk  # noqa: E402
 
 st.set_page_config(page_title="VientoMX · Evaluación de recurso eólico", page_icon="🌬️", layout="wide")
 
@@ -892,6 +892,34 @@ with tabs[5]:
         c1, c2 = st.columns(2)
         c1.download_button("⬇ Reporte Excel", report.results_to_excel(r, inputs), "VientoMX_resultados.xlsx", type="primary")
         c2.download_button("⬇ Serie horaria de producción (CSV)", report.hourly_to_csv(r), "VientoMX_produccion_horaria.csv")
+
+        st.subheader("Reporte PDF del estudio")
+        st.caption("Incluye todas las etapas (sitio, viento, terreno, aerogenerador, simulación) con su configuración, "
+                   "supuestos y advertencias, y los resultados con tablas y gráficas.")
+        c1, c2 = st.columns(2)
+        with c1:
+            pdf_proj = st.text_input("Nombre del proyecto", SS.get("pdf_project", ""), key="pdf_project")
+            pdf_author = st.text_input("Elaboró", SS.get("pdf_author", ""), key="pdf_author")
+        with c2:
+            pdf_notes = st.text_area("Notas del analista (opcional)", SS.get("pdf_notes", ""), key="pdf_notes",
+                                     height=110)
+        pdf_key = (id(r), pdf_proj, pdf_author, pdf_notes)
+        if st.button("Generar reporte PDF"):
+            with st.spinner("Generando PDF (gráficas y tablas)…"):
+                try:
+                    study = pdf_report.Study(
+                        layout=SS.layout, met=SS.met, turbine=SS.turbine, hub_height=float(SS.cfg.hub_height),
+                        grid=SS.grid, cfg=SS.cfg, results=r, calib=SS.calib, calib_h=SS.calib_h,
+                        calib_ref=SS.calib_ref, gwa_info=SS.gwa_info, mcp_info=SS.mcp_info, ref_latlon=SS.ref_latlon,
+                        project=pdf_proj, author=pdf_author, notes=pdf_notes)
+                    SS.pdf_bytes, SS.pdf_key = pdf_report.build_pdf(study), pdf_key
+                except Exception as e:
+                    st.error(f"No se pudo generar el PDF: {e}")
+        if SS.get("pdf_bytes") and SS.get("pdf_key") == pdf_key:
+            st.download_button("⬇ Descargar reporte PDF", SS.pdf_bytes, "VientoMX_reporte.pdf", "application/pdf",
+                               type="primary")
+        elif SS.get("pdf_bytes"):
+            st.caption("Los resultados o los datos del reporte cambiaron: vuelva a generar el PDF.")
 
 # ------------------------------------------------------------------ método
 with tabs[6]:
