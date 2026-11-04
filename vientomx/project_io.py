@@ -93,12 +93,12 @@ def _read_bytes(src) -> bytes:
 
 def _check(js: dict, kind: str) -> dict:
     if not isinstance(js, dict) or js.get("formato") != FORMAT:
-        raise ValueError("El archivo no es una configuración de VientoMX.")
+        raise ValueError("El archivo no es una configuración de iik.")
     got = js.get("tipo")
     if got != kind:
         raise ValueError(f"Este archivo es de «{KIND_NAMES.get(got, got)}», no de «{KIND_NAMES.get(kind, kind)}».")
     if int(js.get("version", 0)) > VERSION:
-        raise ValueError("El archivo se creó con una versión más nueva de VientoMX; actualice el programa.")
+        raise ValueError("El archivo se creó con una versión más nueva de iik; actualice el programa.")
     return js
 
 
@@ -116,7 +116,7 @@ def _open_zip(src, kind: str) -> tuple[zipfile.ZipFile, dict]:
     except zipfile.BadZipFile:
         raise ValueError("No es un archivo ZIP válido.") from None
     if "config.json" not in z.namelist():
-        raise ValueError("El ZIP no contiene config.json; no parece una configuración de VientoMX.")
+        raise ValueError("El ZIP no contiene config.json; no parece una configuración de iik.")
     return z, _check(json.loads(z.read("config.json").decode("utf-8-sig")), kind)
 
 
@@ -211,7 +211,7 @@ def met_to_zip(met: MetData, reanalysis: MetData | None = None, ref_latlon=None,
         z.writestr("serie.csv", _met_csv(met))
         if not same:
             z.writestr("reanalisis.csv", _met_csv(reanalysis))
-        z.writestr("LEAME.txt", "Configuración del paso 2 (datos de viento) de VientoMX.\n"
+        z.writestr("LEAME.txt", "Configuración del paso 2 (datos de viento) de iik.\n"
                                 "serie.csv: serie horaria usada en el estudio (UTC; ws_<altura> en m/s, wd_<altura> en °).\n"
                                 "reanalisis.csv: serie de reanálisis usada para el MCP (si aplica).\n"
                                 "config.json: fuente, punto, calibración y opciones.\n")
@@ -335,5 +335,5 @@ def project_from_zip(src) -> dict[str, bytes]:
         _check(json.loads(z.read("proyecto.json").decode("utf-8-sig")), "proyecto")
     out = {k: z.read(name) for k, name in PROJECT_MEMBERS.items() if name in z.namelist()}
     if not out:
-        raise ValueError("El ZIP no contiene archivos de pasos de VientoMX.")
+        raise ValueError("El ZIP no contiene archivos de pasos de iik.")
     return out

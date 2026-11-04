@@ -33,7 +33,7 @@ import pandas as pd
 import requests
 
 CACHE_DIR = Path(os.environ.get("VIENTOMX_CACHE", Path.home() / ".vientomx" / "cache"))
-UA = {"User-Agent": "VientoMX-WRA/0.1 (educational wind resource assessment)"}
+UA = {"User-Agent": "iik-WRA/0.1 (educational wind resource assessment)"}
 
 ProgressCb = Callable[[float, str], None] | None
 

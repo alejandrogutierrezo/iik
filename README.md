@@ -1,4 +1,8 @@
-# VientoMX 🌬️
+<img src="brand/iik-logo-on-light.svg" alt="iik" width="160">
+
+# iik
+
+*iik* es la palabra maya para viento. Desarrollado por Dr. Alejandro Gutiérrez Ortiz.
 
 **Evaluación de recurso eólico (Wind Resource Assessment) y producción anual de
 parques eólicos, pensada para México y para estudiantes universitarios.**
@@ -52,6 +56,9 @@ pip install -e ".[era5]"
 vientomx app          # abre la interfaz en el navegador (http://localhost:8501)
 vientomx demo         # caso de prueba sin internet, imprime resultados
 ```
+
+El paquete de Python y el comando siguen llamándose `vientomx`, y los archivos de
+configuración guardados (`*.vmx-*`) son compatibles con las versiones anteriores.
 
 En la interfaz, el botón **"Cargar caso demo"** llena todos los pasos con un
 ejemplo en La Ventosa, Oaxaca (viento sintético), útil para explorar sin
@@ -117,6 +124,37 @@ sin volver a descargar nada.
 Los resultados (paso 6) no se guardan: se recalculan con **▶ Calcular AEP**. Los
 archivos se leen y escriben también desde Python con `vientomx.project_io`.
 
+### Navegación por pasos
+
+Las pestañas siguen el orden del estudio. Un paso se habilita cuando el anterior
+quedó configurado: las pestañas de pasos pendientes aparecen en gris (tachadas en
+el estilo Nothing) y no se pueden abrir. Al terminar un paso (generar o subir el
+layout, descargar el viento, preparar el terreno, elegir el aerogenerador o
+calcular la AEP) la app pasa sola al siguiente. Cuando el paso se arma a mano
+(por ejemplo, turbinas colocadas en el mapa o una medición con MCP), el botón
+**Continuar al paso N →** al final de la pestaña hace lo mismo. La línea bajo
+las pestañas funciona como barra de progreso: se pinta bajo cada paso terminado.
+
+### Estilo de la interfaz: Nothing o Clásica
+
+Al final de la barra lateral, **Estilo de la interfaz** cambia el aspecto sin
+tocar los datos ni el estudio en curso. La app abre en **Nothing · oscuro**.
+
+- **Clásica**: colores y acomodo estándar de Streamlit, con las mismas tipografías
+  que la variante Nothing (Space Grotesk; cifras y código en Space Mono).
+- **Nothing · oscuro** y **Nothing · claro**: variante monocroma inspirada en el
+  sistema de diseño de Nothing. Fondo negro OLED o papel `#F5F5F5`, tipografías
+  Space Grotesk / Space Mono / Doto (Google Fonts), etiquetas de instrumento en
+  mayúsculas, botones de píldora, avance del estudio como barra segmentada, la
+  AEP P50 como cifra principal en Resultados, gráficas en escala de grises (el
+  rojo `#D71921` marca turbinas y pérdidas) y mapas base en escala de grises.
+
+El estilo se guarda en la URL (`?estilo=nothing-claro`, `?estilo=clasica`) y se
+puede fijar al arrancar con la variable de entorno `VIENTOMX_ESTILO=clasica`.
+El logotipo y las reglas de marca están en [`brand/`](brand/BRAND.md). Las fuentes se cargan de Google Fonts; sin
+internet se usan las tipografías de respaldo del sistema. El código está en
+[`app/tema.py`](app/tema.py).
+
 ## Fuentes de datos
 
 | Insumo | Fuente | Notas para México |
@@ -171,9 +209,9 @@ Formato del CSV propio: columnas `ws` (m/s), `power_kw` y opcional `ct`.
 ## Relación con otros proyectos
 
 * **Continuum (One Energy)**: modelo de flujo distinto (basado en mediciones y
-  exposición del terreno), escrito en C#/Windows. VientoMX toma la idea de
+  exposición del terreno), escrito en C#/Windows. iik toma la idea de
   trabajar por sector con DEM y rugosidad, pero con un modelo lineal FFT.
-* **brightwind**: análisis de mediciones (MCP, cizalladura, limpieza). VientoMX
+* **brightwind**: análisis de mediciones (MCP, cizalladura, limpieza). iik
   implementa un MCP básico; para análisis de torre a fondo, brightwind es buen
   complemento.
 * **OpenOA (NREL)**: análisis de parques en operación (SCADA), no evaluación

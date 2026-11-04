@@ -1,6 +1,6 @@
-# Método de cálculo de VientoMX
+# Método de cálculo de iik
 
-VientoMX busca una fidelidad **intermedia entre SAM y WAsP**: más que SAM (que usa
+iik busca una fidelidad **intermedia entre SAM y WAsP**: más que SAM (que usa
 un solo recurso para todo el parque y estelas simplificadas) porque modela cada
 aerogenerador con su terreno, rugosidad y estelas por dirección; menos que WAsP
 porque usa modelos lineales simplificados y no resuelve la estabilidad atmosférica
