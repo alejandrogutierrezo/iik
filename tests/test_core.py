@@ -159,14 +159,62 @@ def test_osm_parse_and_layout_editing():
     assert lay["id"].tolist()[0] == "SC-01" and lay["id"].nunique() == 3 and "osm_id" in lay
 
     q = osm.build_query(25.5, -100.8, 25.7, -100.6)
-    assert '"generator:source"="wind"' in q and "(25.500000,-100.800000,25.700000,-100.600000)" in q
+    assert '"generator:source"="wind"' in q and "[bbox:25.500000,-100.800000,25.700000,-100.600000]" in q
+    assert '"generator:method"="wind_turbine"' in q and '"plant:source"="wind"' in q
     with pytest.raises(ValueError):
         osm.fetch_wind_turbines(20, -110, 25, -100)  # área demasiado grande
 
     resp = mock.Mock(json=lambda: data, raise_for_status=lambda: None)
     with mock.patch("vientomx.osm.requests.post", side_effect=[OSError("bloqueado"), resp]) as post:
         got = osm.fetch_wind_turbines(25.59, -100.69, 25.62, -100.67)
-    assert len(got) == 3 and post.call_count == 2  # se usa el servidor espejo
+    assert len(got) == 3 and post.call_count == len(osm.OVERPASS_URLS)  # espejos en paralelo
+
+    # un servidor colgado no bloquea la búsqueda: responde el primero que sirve
+    import time as _t
+
+    def slow_or_ok(url, **kw):
+        if "overpass-api.de" in url:
+            _t.sleep(3)
+        return resp
+    t0 = _t.monotonic()
+    with mock.patch("vientomx.osm.requests.post", side_effect=slow_or_ok):
+        got = osm.fetch_wind_turbines(25.59, -100.69, 25.62, -100.67)
+    assert len(got) == 3 and _t.monotonic() - t0 < 2
+    # si todos se cuelgan, se respeta el límite total de tiempo con un mensaje claro
+    with mock.patch("vientomx.osm.requests.post", side_effect=lambda url, **kw: _t.sleep(3)):
+        t0 = _t.monotonic()
+        with pytest.raises(RuntimeError, match="sin respuesta"):
+            osm.fetch_osm(25.59, -100.69, 25.62, -100.67, deadline=0.5)
+        assert _t.monotonic() - t0 < 2
+    # HTML de error de Overpass -> error, no excepción rara
+    bad = mock.Mock(status_code=504, raise_for_status=lambda: None, json=mock.Mock(side_effect=ValueError))
+    with mock.patch("vientomx.osm.requests.post", return_value=bad):
+        with pytest.raises(RuntimeError, match="no JSON"):
+            osm.fetch_osm(25.59, -100.69, 25.62, -100.67, deadline=2)
+
+    # parque mapeado como polígono, sin turbinas individuales
+    plant = {"elements": [{"type": "way", "id": 9, "center": {"lat": 25.61, "lon": -100.68},
+                           "tags": {"power": "plant", "plant:source": "wind", "name": "Parque Eólico Santa Catarina",
+                                    "plant:output:electricity": "22 MW"}}]}
+    assert osm.parse_overpass(plant).empty
+    pl = osm.parse_plants(plant)
+    assert pl.nombre.iloc[0] == "Parque Eólico Santa Catarina" and pl.potencia_kw.iloc[0] == 22000
+
+    # GeoJSON exportado de overpass-turbo
+    gj = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "id": "node/101", "geometry": {"type": "Point", "coordinates": [-100.6801, 25.6101]},
+         "properties": {"power": "generator", "generator:source": "wind", "ref": "SC-01"}},
+        {"type": "Feature", "id": "way/7", "geometry": {"type": "Polygon", "coordinates": [[[-100.679, 25.60],
+         [-100.677, 25.60], [-100.678, 25.601], [-100.679, 25.60]]]}, "properties": {"tags": {"power": "generator"}}},
+    ]}
+    g = osm.parse_geojson(gj)
+    assert g.osm_id.tolist() == ["n101", "w7"] and g.ref.iloc[0] == "SC-01"
+
+    # vista del mapa de resultados centrada en el parque
+    (clat, clon), z = layout.map_view([25.60, 25.62], [-100.70, -100.68])
+    assert clat == pytest.approx(25.61) and clon == pytest.approx(-100.69) and 11 <= z <= 14
+    (clat, clon), z = layout.map_view([16.5, 16.6], [-95.1, -94.8])
+    assert z < 11
 
     # edición manual del layout
     L = layout.add_turbine(None, 25.61, -100.68)
