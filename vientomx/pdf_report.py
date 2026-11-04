@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import io
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -948,8 +949,16 @@ def _cover(study: Study, st, story):
                            "automáticamente. Las tablas completas están también en el reporte Excel.", st["small"]))
 
 
+_PDF_LOCK = threading.Lock()  # pyplot no es seguro entre hilos: en un servidor, un reporte a la vez
+
+
 def build_pdf(study: Study) -> bytes:
     """Genera el reporte PDF y devuelve sus bytes."""
+    with _PDF_LOCK:
+        return _build_pdf(study)
+
+
+def _build_pdf(study: Study) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.units import cm

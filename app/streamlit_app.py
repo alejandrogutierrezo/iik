@@ -4,6 +4,7 @@ Ejecutar:  streamlit run app/streamlit_app.py
 """
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -16,6 +17,10 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import nube  # noqa: E402
+
+nube.cargar_secretos()  # antes de importar vientomx (lee variables de entorno al importarse)
 
 import tema  # noqa: E402
 from vientomx import aep, climate, gwa, layout, met, osm, pdf_report, project_io, report, terrain, turbines, wtk  # noqa: E402
@@ -91,6 +96,33 @@ def ok(flag):
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def _osm_search(south, west, north, east):
     return osm.fetch_osm(south, west, north, east)
+
+
+def _load_upload(up, g, what):
+    """Lee un GeoTIFF subido a la malla. Usa un archivo temporal propio de esta carga (en un servidor compartido
+    varios usuarios pueden subir archivos al mismo tiempo) y lo borra al terminar."""
+    with tempfile.NamedTemporaryFile(suffix=".tif", prefix="iik_upload_", delete=False) as fh:
+        fh.write(up.getvalue())
+    try:
+        terrain.load_raster_to_grid(fh.name, g, what)
+    finally:
+        Path(fh.name).unlink(missing_ok=True)
+
+
+def _make_terrain_grid(buf_km, res_m):
+    """Malla de terreno; en un servidor compartido, si pasa del límite de celdas, usa una resolución más gruesa."""
+    lim = nube.max_celdas()
+    for dx in [d for d in (50, 100, 200, 400) if d >= res_m] or [res_m]:
+        g, xs, ys = terrain.make_grid(SS.layout.lat, SS.layout.lon, buf_km, dx)
+        if not lim or g.nx * g.ny <= lim:
+            break
+    if lim and g.nx * g.ny > lim:
+        raise ValueError(f"El área es demasiado grande para este servidor ({g.nx}×{g.ny} celdas a {dx:g} m). "
+                         "Reduzca el margen alrededor del parque.")
+    SS.terrain_note = (f"Para no agotar la memoria del servidor se usó una resolución de {dx:g} m en lugar de "
+                       f"{res_m:g} m (límite de {lim:,} celdas). Reduzca el margen para calcular a {res_m:g} m."
+                       if dx != res_m else None)
+    return g, xs, ys
 
 
 def _fit(lat, lon):
@@ -713,7 +745,10 @@ with tabs[1]:
                                "represente la posición y elevación de las turbinas (o compárelos con una medición).")
             key_cds = None
             if "CDS" in src:
-                key_cds = st.text_input("API key del CDS (o configure ~/.cdsapirc)", type="password")
+                srv_key = bool(os.environ.get("CDSAPI_KEY"))
+                key_cds = st.text_input("API key del CDS" + (" (opcional: el servidor ya tiene una configurada)"
+                                                             if srv_key else " (o configure ~/.cdsapirc)"),
+                                        type="password")
                 st.caption("Regístrese gratis en https://cds.climate.copernicus.eu y acepte la licencia de ERA5.")
             st.caption("Se recomiendan ≥ 10 años para representar el largo plazo. La descarga se guarda en caché.")
             if st.button("Descargar datos", type="primary"):
@@ -932,28 +967,31 @@ with tabs[2]:
             up_z0 = st.file_uploader("GeoTIFF de rugosidad z0 [m] (opcional; si no, se descarga WorldCover)",
                                      type=["tif", "tiff"], key="z0_up")
             st.caption("INEGI CEM 3.0: https://www.inegi.org.mx/app/geo2/elevacionesmex/ — descargue el estado/área y súbalo aquí.")
+        if SS.grid is not None and SS.get("terrain_note"):
+            st.warning(SS.terrain_note)
+        if nube.max_celdas():
+            st.caption(f"Servidor compartido: la malla se limita a {nube.max_celdas():,} celdas "
+                       f"(≈ {nube.max_celdas() ** 0.5 * 0.05:.0f} km por lado a 50 m, "
+                       f"{nube.max_celdas() ** 0.5 * 0.1:.0f} km a 100 m).")
         if st.button("Preparar terreno", type="primary"):
-            g, xs, ys = terrain.make_grid(SS.layout.lat, SS.layout.lon, buf, res)
             bar = st.progress(0.0, text="Preparando malla…")
             try:
-                if tsrc.startswith("Terreno plano"):
-                    terrain.flat_terrain(g)
-                else:
-                    if up_dem is not None:
-                        p = Path(tempfile.gettempdir()) / "vientomx_dem_upload.tif"
-                        p.write_bytes(up_dem.getvalue())
-                        terrain.load_raster_to_grid(str(p), g, "elev")
+                g, xs, ys = _make_terrain_grid(buf, res)
+                with nube.turno("La preparación del terreno"):
+                    if tsrc.startswith("Terreno plano"):
+                        terrain.flat_terrain(g)
                     else:
-                        terrain.download_dem(g, progress=progress_cb(bar))
-                    if up_z0 is not None:
-                        p = Path(tempfile.gettempdir()) / "vientomx_z0_upload.tif"
-                        p.write_bytes(up_z0.getvalue())
-                        terrain.load_raster_to_grid(str(p), g, "z0")
-                    else:
-                        terrain.download_worldcover(g, progress=progress_cb(bar),
-                                                    z0_table=dict(zip(z0tab["Clase"], z0tab["z0 [m]"])))
-                SS.grid, SS.results = g, None
-                bar.progress(1.0, text="Terreno listo")
+                        if up_dem is not None:
+                            _load_upload(up_dem, g, "elev")
+                        else:
+                            terrain.download_dem(g, progress=progress_cb(bar))
+                        if up_z0 is not None:
+                            _load_upload(up_z0, g, "z0")
+                        else:
+                            terrain.download_worldcover(g, progress=progress_cb(bar),
+                                                        z0_table=dict(zip(z0tab["Clase"], z0tab["z0 [m]"])))
+                    SS.grid, SS.results = g, None
+                    bar.progress(1.0, text="Terreno listo")
             except Exception as e:
                 st.error(f"Error al preparar el terreno: {e}")
             else:
@@ -1165,7 +1203,8 @@ with tabs[4]:
             ref = ref or SS.calib_ref
         bar = st.progress(0.0, text="Iniciando…")
         try:
-            SS.results = aep.run_aep(SS.layout, ts, SS.turbine, cfg, g, rho, ref, progress=progress_cb(bar))
+            with nube.turno("El cálculo de la AEP"):
+                SS.results = aep.run_aep(SS.layout, ts, SS.turbine, cfg, g, rho, ref, progress=progress_cb(bar))
             SS.cfg = cfg
             st.success(f"Cálculo terminado. Vea la pestaña «{L('⑥ Resultados')}».")
         except Exception as e:

@@ -155,6 +155,59 @@ El logotipo y las reglas de marca están en [`brand/`](brand/BRAND.md). Las fuen
 internet se usan las tipografías de respaldo del sistema. El código está en
 [`app/tema.py`](app/tema.py).
 
+## Publicar en internet (Streamlit Community Cloud)
+
+Para que otras personas (p. ej. un grupo de alumnos) usen iik desde el navegador, sin instalar nada:
+
+1. Entre a [share.streamlit.io](https://share.streamlit.io) con su cuenta de GitHub y autorice el acceso
+   al repositorio.
+2. **Create app → Deploy a public app from GitHub** y llene:
+   * Repository: `alejandrogutierrezo/iik` · Branch: `alumnos` (vea abajo por qué no `main`)
+   * Main file path: `app/streamlit_app.py`
+   * App URL: el nombre que quiera, p. ej. `iik-wra` → `https://iik-wra.streamlit.app`
+3. En **Advanced settings** elija **Python 3.12**. Las versiones de `requirements.txt` piden 3.12 o 3.13, y
+   `turbine-models` no se instala en 3.14. La versión de Python no se puede cambiar después: hay que
+   borrar la app y volver a publicarla con el mismo nombre de URL. Ahí mismo puede pegar los secretos (vea `.streamlit/secrets.toml.example`; todos son opcionales).
+4. **Deploy**. La primera vez tarda unos minutos en instalar las dependencias. Después, cada cambio que
+   llegue a la rama `alumnos` se publica solo.
+
+La app de los alumnos se publica desde la rama `alumnos` y no desde `main`, para que lo que se desarrolla
+en `main` no les cambie la app a media clase. Cuando una versión esté lista para la clase, abra en GitHub
+un pull request de `main` hacia `alumnos` (**Pull requests → New**, base `alumnos`, compare `main`) y
+haga merge; Streamlit la publica en un minuto.
+
+Es el mismo código para las dos cosas: corriendo en su computadora no tiene límites; en Streamlit
+Community Cloud activa solo los límites de abajo. Para ver en su computadora la versión de los alumnos,
+arránquela con `IIK_SERVIDOR_COMPARTIDO=1` (PowerShell: `$env:IIK_SERVIDOR_COMPARTIDO="1"; vientomx app`).
+
+Quién puede entrar: si el repositorio es **público**, cualquiera con el enlace. Si es **privado**, la app
+también lo es: en **Share** invite a cada persona por correo (entra con Google o con un enlace de un solo
+uso que le llega por correo), o en **Settings → Sharing** márquela como pública. La cuenta gratuita admite
+una sola app privada a la vez.
+
+En Streamlit Community Cloud la app se pone sola en **modo servidor compartido** (o con
+`IIK_SERVIDOR_COMPARTIDO=1` en otro servidor):
+
+* el estilo de la interfaz queda fijo para todos (`VIENTOMX_ESTILO`, por defecto Nothing oscuro), porque
+  el tema de Streamlit es uno solo por servidor;
+* solo corren 2 cálculos pesados a la vez (terreno y AEP); los demás esperan su turno con un aviso
+  (`IIK_TAREAS_SIMULTANEAS`);
+* la malla de terreno se limita a 400 000 celdas, unos 30 km por lado a 50 m (`IIK_MAX_CELDAS`); si el
+  área es mayor se usa una resolución más gruesa y se avisa.
+
+Estos valores están pensados para un grupo pequeño (unos 5 alumnos a la vez). Un cálculo de AEP de 24
+turbinas con 20 años horarios y la malla máxima usa unos 250 MB además de los ~250 MB de la app, así que
+2 a la vez caben con holgura. Con grupos más grandes conviene bajar `IIK_MAX_CELDAS`; con
+`IIK_TAREAS_SIMULTANEAS = "3"` se espera menos, a cambio de más riesgo de pasar el límite de memoria
+(si eso pasa, la app se reinicia para todos).
+
+El servidor gratuito tiene poca memoria (entre 690 MB y 2.7 GB según la carga) y se duerme tras 12 h sin
+visitas; cualquiera con acceso lo despierta con un clic. Streamlit da más recursos gratis a instituciones
+educativas que lo soliciten.
+Las descargas quedan en una caché que se borra cuando el servidor se reinicia. Para ERA5 del CDS puede
+poner `CDSAPI_URL` y `CDSAPI_KEY` en los secretos: así nadie tiene que escribir la clave, pero todas las
+descargas usarán esa cuenta.
+
 ## Fuentes de datos
 
 | Insumo | Fuente | Notas para México |
@@ -227,7 +280,6 @@ Formato del CSV propio: columnas `ws` (m/s), `power_kw` y opcional `ct`.
   ΔRIX o acoplar un modelo CFD.
 * No modela estabilidad atmosférica en las estelas ni el efecto de bloqueo.
 * Sin optimización de layout (posible extensión con PyWake/TOPFARM).
-* Sin guardado de proyectos (`.json` / `.zip`): pendiente.
 
 ## Pruebas
 

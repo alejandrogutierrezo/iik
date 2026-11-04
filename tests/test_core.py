@@ -165,9 +165,12 @@ def test_osm_parse_and_layout_editing():
         osm.fetch_wind_turbines(20, -110, 25, -100)  # área demasiado grande
 
     resp = mock.Mock(json=lambda: data, raise_for_status=lambda: None)
-    with mock.patch("vientomx.osm.requests.post", side_effect=[OSError("bloqueado"), resp]) as post:
+    n_urls = len(osm.OVERPASS_URLS)
+    with mock.patch("vientomx.osm.requests.post", side_effect=[OSError("bloqueado")] + [resp] * n_urls) as post:
         got = osm.fetch_wind_turbines(25.59, -100.69, 25.62, -100.67)
-    assert len(got) == 3 and post.call_count == len(osm.OVERPASS_URLS)  # espejos en paralelo
+    # espejos en paralelo: el primero que responde gana y se cancelan los que aún no arrancan
+    # (cuántos alcanzan a arrancar depende del hilo; en Python 3.12 suelen ser menos que en 3.13)
+    assert len(got) == 3 and 2 <= post.call_count <= n_urls
 
     # un servidor colgado no bloquea la búsqueda: responde el primero que sirve
     import time as _t
