@@ -372,3 +372,20 @@ def test_gwa_sampling_and_calibration(tmp_path, monkeypatch):
     w = aep.reliability_warnings({"RIX medio [%]": 21, "Factor de planta neto [%]": 4.7}, "ERA5 (Open-Meteo)", False)
     assert len(w) == 2 and "subestimada" in w[0]
     assert aep.reliability_warnings({"RIX medio [%]": 1, "Factor de planta neto [%]": 30}, "NREL WIND Toolkit", False) == []
+
+
+def test_pdf_report_full_and_partial(lib):
+    from vientomx import pdf_report
+
+    lay = layout.grid_layout(16.55, -94.95, 2, 3, 7, 3, 130, 0)
+    m = met.synthetic_met(years=(2015, 2016))
+    g, _, _ = terrain.make_grid(lay.lat, lay.lon, 4, 200)
+    terrain.flat_terrain(g, 30, 0.05)
+    t = lib["IEA Reference 3.4 MW D130"]
+    cfg = aep.SimConfig(hub_height=110)
+    r = aep.run_aep(lay, climate.extrapolate_to_height(m, 110), t, cfg, g, 1.2)
+    pdf = pdf_report.build_pdf(pdf_report.Study(layout=lay, met=m, turbine=t, hub_height=110, grid=g, cfg=cfg,
+                                                results=r, project="Prueba"))
+    assert pdf.startswith(b"%PDF") and len(pdf) > 50_000
+    # solo con layout: las etapas faltantes quedan como pendientes, sin error
+    assert pdf_report.build_pdf(pdf_report.Study(layout=lay)).startswith(b"%PDF")
