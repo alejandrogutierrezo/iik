@@ -117,6 +117,25 @@ sin volver a descargar nada.
 Los resultados (paso 6) no se guardan: se recalculan con **▶ Calcular AEP**. Los
 archivos se leen y escriben también desde Python con `vientomx.project_io`.
 
+### Estilo de la interfaz: Clásica o Nothing
+
+Al final de la barra lateral, **Estilo de la interfaz** cambia el aspecto sin
+tocar los datos ni el estudio en curso:
+
+- **Clásica**: el tema estándar de Streamlit (el de siempre).
+- **Nothing · oscuro** y **Nothing · claro**: variante monocroma inspirada en el
+  sistema de diseño de Nothing. Fondo negro OLED o papel `#F5F5F5`, tipografías
+  Space Grotesk / Space Mono / Doto (Google Fonts), etiquetas de instrumento en
+  mayúsculas, botones de píldora, avance del estudio como barra segmentada, la
+  AEP P50 como cifra principal en Resultados, gráficas en escala de grises (el
+  rojo `#D71921` marca turbinas y pérdidas) y mapas base en escala de grises.
+
+El estilo se guarda en la URL (`?estilo=nothing-oscuro`, `?estilo=nothing-claro`)
+y se puede fijar al arrancar con la variable de entorno
+`VIENTOMX_ESTILO=nothing-oscuro`. Las fuentes se cargan de Google Fonts; sin
+internet se usan las tipografías de respaldo del sistema. El código está en
+[`app/tema.py`](app/tema.py).
+
 ## Fuentes de datos
 
 | Insumo | Fuente | Notas para México |
