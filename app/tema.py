@@ -522,6 +522,16 @@ h1,h2,h3{letter-spacing:-.01em}
 """
 
 
+def estilo_fijo() -> str | None:
+    """En un servidor compartido el estilo queda fijo para todos: el tema de Streamlit es global al proceso,
+    así que si cada usuario eligiera el suyo se lo cambiarían unos a otros. Se elige con VIENTOMX_ESTILO."""
+    import nube
+    if not nube.compartido():
+        return None
+    env = os.environ.get("VIENTOMX_ESTILO", "")
+    return env if env in ESTILOS else DEFAULT
+
+
 def _initial_key() -> str:
     q = st.query_params.get("estilo")
     if q in ESTILOS:
@@ -532,10 +542,15 @@ def _initial_key() -> str:
 
 def aplicar(SS, key: str = "ui_estilo") -> Estilo:
     """Lee el estilo elegido, ajusta el tema de Streamlit e inyecta el CSS. Llamar antes de dibujar nada."""
-    if SS.get(key) not in ESTILOS:
+    fijo = estilo_fijo()
+    if fijo:
+        SS[key] = fijo
+    elif SS.get(key) not in ESTILOS:
         SS[key] = _initial_key()
     k = SS[key]
-    if st.query_params.get("estilo") != k:
+    if fijo:
+        st.query_params.pop("estilo", None)
+    elif st.query_params.get("estilo") != k:
         if k == DEFAULT:
             st.query_params.pop("estilo", None)
         else:
@@ -555,7 +570,9 @@ def aplicar(SS, key: str = "ui_estilo") -> Estilo:
 
 
 def selector(key: str = "ui_estilo"):
-    """Control para elegir el estilo (va en la barra lateral)."""
+    """Control para elegir el estilo (va en la barra lateral). No aparece si el estilo es fijo."""
+    if estilo_fijo():
+        return
     st.selectbox("Estilo de la interfaz", list(ESTILOS), format_func=ESTILOS.get, key=key,
                  help="«Nothing»: variante monocroma inspirada en el sistema de diseño de Nothing, en modo "
                       "oscuro o claro. Se recuerda en la URL (?estilo=…).")

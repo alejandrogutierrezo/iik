@@ -1,0 +1,14 @@
+# Configuración de Streamlit para iik (se usa al correr local y en Streamlit Community Cloud).
+# El tema (colores y tipografías) lo pone la app según el estilo elegido; no lo fije aquí.
+
+[server]
+# Tamaño máximo de archivo subido [MB] (GeoTIFF del INEGI, CSV de mediciones, proyectos guardados).
+# Cada archivo subido se guarda en la memoria del servidor: en uno gratuito conviene no subirlo más.
+maxUploadSize = 100
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Menú de la esquina: solo las opciones para quien usa la app (sin las de desarrollador).
+toolbarMode = "viewer"
