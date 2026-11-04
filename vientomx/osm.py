@@ -28,7 +28,7 @@ if os.environ.get("VIENTOMX_OVERPASS_URL"):
     OVERPASS_URLS = (os.environ["VIENTOMX_OVERPASS_URL"],) + OVERPASS_URLS
 MAX_BBOX_DEG2 = 1.0  # ~110 x 110 km; Overpass rechaza o tarda mucho con áreas mayores
 DEADLINE_S = 40  # tiempo máximo total de la búsqueda (todos los servidores en paralelo)
-USER_AGENT = "VientoMX/0.1 (wind resource assessment; https://github.com/alejandrogutierrezo/iik)"
+USER_AGENT = "iik/0.1 (wind resource assessment; https://github.com/alejandrogutierrezo/iik)"
 COLUMNS = ["osm_id", "lat", "lon", "nombre", "ref", "fabricante", "modelo", "potencia_kw", "altura_buje_m",
            "diametro_rotor_m", "operador"]
 
@@ -209,7 +209,7 @@ def bbox_around(lat: float, lon: float, radius_km: float):
 
 
 def to_layout(df: pd.DataFrame, prefix: str = "WTG") -> pd.DataFrame:
-    """Convierte turbinas OSM al formato de layout de VientoMX (``id, lat, lon`` [+ ``hub_height``])."""
+    """Convierte turbinas OSM al formato de layout de iik (``id, lat, lon`` [+ ``hub_height``])."""
     ids = []
     for i, r in enumerate(df.itertuples(index=False)):
         lab = r.ref or r.nombre

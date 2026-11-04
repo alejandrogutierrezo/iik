@@ -1,4 +1,4 @@
-"""Estilos de la interfaz de VientoMX: «Clásica» (Streamlit por defecto) y la variante «Nothing».
+"""Estilos de la interfaz de iik: «Clásica» (Streamlit por defecto) y la variante «Nothing».
 
 La variante Nothing sigue el sistema de diseño Nothing (nothing-design): monocromo, tipografía Space Grotesk /
 Space Mono / Doto, etiquetas de instrumento en MAYÚSCULAS, sin sombras ni degradados, y el rojo #D71921 solo
@@ -16,10 +16,12 @@ vez al interactuar. Para una app local de un solo usuario no tiene efecto práct
 """
 from __future__ import annotations
 
+import base64
 import html
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import streamlit as st
 from streamlit import config as _config
@@ -29,7 +31,8 @@ ESTILOS = {
     "nothing-oscuro": "Nothing · oscuro",
     "nothing-claro": "Nothing · claro",
 }
-DEFAULT = "clasica"
+DEFAULT = "nothing-oscuro"  # estilo con el que abre la app
+CLASICA = "clasica"
 
 ACCENT = "#D71921"
 SUCCESS = "#4A9E5C"
@@ -102,7 +105,7 @@ def _set_streamlit_theme(values: dict) -> bool:
     for k, v in values.items():
         try:
             if _config.get_option(f"theme.{k}") != v:
-                _config.set_option(f"theme.{k}", v, "<estilo VientoMX>")
+                _config.set_option(f"theme.{k}", v, "<estilo iik>")
                 changed = True
         except Exception:  # opción que no existe en esta versión de Streamlit: se omite
             continue
@@ -182,7 +185,7 @@ def plotly_template(dark: bool):
 # ------------------------------------------------------------------ objeto de estilo
 @dataclass
 class Estilo:
-    key: str = DEFAULT
+    key: str = CLASICA
     nothing: bool = False
     dark: bool = True
     t: dict = field(default_factory=dict)
@@ -323,18 +326,93 @@ def hero(label: str, value: str, unit: str, note: str = "") -> str:
             f"{n}</div>")
 
 
-def sidebar_brand(steps: list[tuple[str, bool]]) -> str:
-    """Encabezado de la barra lateral: marca en Doto, avance segmentado y lista de pasos."""
+BRAND_DIR = Path(__file__).resolve().parents[1] / "brand"
+APP_NAME = "iik"
+SUBTITLE = "Recurso eólico · México"
+
+
+def logo_html(dark: bool = True, width: int = 120) -> str:
+    """Logotipo oficial como <img> (el sanitizador de st.html quita los <svg> en línea).
+
+    Según brand/BRAND.md: se usan los SVG tal cual (iik-logo-on-dark.svg sobre fondo oscuro,
+    iik-logo-on-light.svg sobre claro), sin deformar (viewBox 4:3) y con ancho mínimo de 96 px.
+    """
+    name = "iik-logo-on-dark.svg" if dark else "iik-logo-on-light.svg"
+    try:
+        data = base64.b64encode((BRAND_DIR / name).read_bytes()).decode("ascii")
+    except OSError:  # sin la carpeta brand/: el nombre en texto
+        return f'<span class="nd-logo-txt">{APP_NAME}</span>'
+    w = max(int(width), 96)
+    return (f'<img src="data:image/svg+xml;base64,{data}" width="{w}" height="{w * 3 // 4}" '
+            f'alt="{APP_NAME}" style="display:block">')
+
+
+def favicon() -> str:
+    """Ruta del ícono de la app (brand/iik-icon-dark.svg) o un emoji si no existe."""
+    p = BRAND_DIR / "iik-icon-dark.svg"
+    return str(p) if p.exists() else "🌬️"
+
+
+def brand_header(dark: bool = False) -> str:
+    """Logotipo + subtítulo (para la barra lateral de la interfaz clásica)."""
+    return (f'<div style="padding:0 0 8px 0">{logo_html(dark, 120)}</div>'
+            f'<div style="font-size:.8rem;opacity:.7;letter-spacing:.04em">{SUBTITLE}</div>')
+
+
+AUTHOR = "Dr. Alejandro Gutiérrez Ortiz"
+
+
+def credit() -> str:
+    """Crédito de autoría (pie de la barra lateral)."""
+    return (f'<div class="nd-credit" style="font-size:11px;letter-spacing:.06em;opacity:.7;line-height:1.5">'
+            f"Desarrollado por {html.escape(AUTHOR)}</div>")
+
+
+def sidebar_brand(steps: list[tuple[str, bool]], dark: bool = True) -> str:
+    """Encabezado de la barra lateral: logotipo, avance segmentado y lista de pasos."""
     done = sum(ok for _, ok in steps)
     items = "".join(f'<li class="{"on" if ok else ""}"><span>{i:02d}</span><span>{html.escape(name)}</span>'
                     f'<b>{"●" if ok else "○"}</b></li>' for i, (name, ok) in enumerate(steps, 1))
     return (
-        '<div class="nd-brand"><div class="nd-logo">VientoMX</div>'
-        '<div class="nd-label">Recurso eólico · México</div></div>'
+        f'<div class="nd-brand"><div class="nd-logo">{logo_html(dark, 120)}</div>'
+        f'<div class="nd-label">{SUBTITLE}</div></div>'
         f'<div class="nd-progress"><div class="nd-row nd-row-tight"><span class="nd-label">Avance del estudio</span>'
         f'<span class="nd-val">{done}<span class="nd-unit">/{len(steps)}</span></span></div>'
         f"{seg_bar(done / len(steps), len(steps), height=8)}<ol class='nd-steps'>{items}</ol></div>"
     )
+
+
+def steps_tabs_css(key: str, done: list[bool], unlocked: list[bool], nothing: bool, dark: bool = True) -> str:
+    """CSS de las pestañas de pasos: bloqueadas (gris en la clásica, tachadas en Nothing) y la línea inferior
+    como barra de progreso, pintada bajo cada paso terminado (tinta en Nothing, color de texto en la clásica).
+
+    ``done[i]`` y ``unlocked[i]`` se refieren a la pestaña i (0 = primera). La pestaña activa se marca con el
+    indicador de Streamlit (rojo), que queda por encima de la barra de progreso.
+    """
+    root = f".st-key-{key} [role='tablist']"
+    gap = 24 if nothing else 16
+    ink = TOKENS[dark]["text0"] if nothing else "rgba(49,51,63,.85)"
+    css = [f"{root}{{gap:{gap}px}}",
+           f"{root}>[role='tab']::after{{content:'';position:absolute;left:0;bottom:0;height:2px;"
+           f"background:transparent;transition:background-color .3s cubic-bezier(0.25,0.1,0.25,1);z-index:0}}",
+           f"{root} .react-aria-SelectionIndicator{{z-index:1}}"]
+    last = max((i for i, d in enumerate(done) if d), default=-1)
+    for i, d in enumerate(done):
+        if d:
+            css.append(f"{root}>[role='tab']:nth-child({i + 1})::after{{background:{ink};"
+                       f"right:{0 if i == last else -gap}px}}")
+    for i, u in enumerate(unlocked):
+        if not u:
+            sel = f"{root}>[role='tab']:nth-child({i + 1})"
+            css.append(f"{sel}{{pointer-events:none;cursor:not-allowed}}")
+            if nothing:
+                css.append(f"{sel} p{{text-decoration:line-through;text-decoration-thickness:1px;"
+                           f"opacity:.55}}")
+            else:
+                css.append(f"{sel}{{opacity:.35}}")
+    if nothing:
+        css.append(f"{root} .react-aria-SelectionIndicator{{background-color:{ACCENT}!important}}")
+    return "<style>" + "\n".join(css) + "</style>"
 
 
 def _css(dark: bool) -> str:
@@ -407,11 +485,11 @@ h1,h2,h3{letter-spacing:-.01em}
 .nd-seg-in{display:flex;gap:2px;height:100%}
 .nd-seg-in i{flex:1;background:var(--nd-seg-off)}
 .nd-seg-in i.on{background:var(--c,var(--nd-text0))}
-.nd-brand{padding:4px 0 32px 0;background-image:radial-gradient(circle,var(--nd-border2) 1px,transparent 1px);
-  background-size:12px 12px;background-position:-6px -6px}
-.nd-logo{font-family:var(--nd-dot);font-size:44px;line-height:1;letter-spacing:-.02em;color:var(--nd-text0);
-  font-weight:600;margin-bottom:8px;display:inline-block;background:var(--nd-surface);padding-right:8px}
-.nd-brand .nd-label{background:var(--nd-surface);display:inline-block;padding-right:8px}
+.nd-credit{font-family:var(--nd-mono);text-transform:uppercase;color:var(--nd-text2);opacity:1!important}
+.nd-brand{padding:0 0 32px 0}
+.nd-logo{color:var(--nd-text0);line-height:0;margin:0 0 16px 0}
+.nd-logo svg{display:block}
+.nd-logo-txt{font-family:var(--nd-dot);font-size:44px;line-height:1;font-weight:800}
 .nd-progress{margin:8px 0 8px 0}
 .nd-rows{border-top:1px solid var(--nd-border)}
 .nd-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:12px 0;
@@ -454,7 +532,7 @@ def aplicar(SS, key: str = "ui_estilo") -> Estilo:
         else:
             st.query_params["estilo"] = k
     original = _original_theme()
-    nothing = k != DEFAULT
+    nothing = k != CLASICA
     dark = k != "nothing-claro"
     if _set_streamlit_theme(_streamlit_theme(dark) if nothing else original):
         st.rerun()  # el tema de Streamlit se envía al navegador al inicio de cada ejecución

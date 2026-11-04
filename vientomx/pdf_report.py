@@ -895,7 +895,7 @@ def _section_method(st, story):
     from reportlab.platypus import Paragraph
     story.append(Paragraph("7 · Método y limitaciones", st["h1"]))
     for p in [
-        "VientoMX busca una fidelidad intermedia entre SAM y WAsP: modela cada aerogenerador con su terreno, rugosidad "
+        "iik busca una fidelidad intermedia entre SAM y WAsP: modela cada aerogenerador con su terreno, rugosidad "
         "y estelas por dirección, pero con modelos lineales simplificados; no resuelve la estabilidad atmosférica ni "
         "la separación del flujo sobre colinas.",
         "Los resultados son adecuados para estudios de prefactibilidad y comparación de alternativas. Para "
@@ -959,15 +959,15 @@ def build_pdf(study: Study) -> bytes:
     st = _styles(font, bold)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=2.3 * cm, rightMargin=2.3 * cm, topMargin=2.0 * cm,
-                            bottomMargin=1.8 * cm, title=study.title, author=study.author or "VientoMX",
-                            subject="Wind Resource Assessment", creator=f"VientoMX {_VERSION}")
+                            bottomMargin=1.8 * cm, title=study.title, author=study.author or "iik",
+                            subject="Wind Resource Assessment", creator=f"iik {_VERSION}")
     head = study.project or study.title
 
     def deco(canvas, d):
         canvas.saveState()
         canvas.setFont(font, 7.5)
         canvas.setFillColor(colors.HexColor("#6b7280"))
-        canvas.drawString(d.leftMargin, letter[1] - 1.25 * cm, f"VientoMX · {head}"[:110])
+        canvas.drawString(d.leftMargin, letter[1] - 1.25 * cm, f"iik · {head}"[:110])
         canvas.drawRightString(letter[0] - d.rightMargin, 1.0 * cm, f"Página {d.page}")
         canvas.drawString(d.leftMargin, 1.0 * cm, f"Generado el {_dt.datetime.now():%d/%m/%Y %H:%M}")
         canvas.setStrokeColor(colors.HexColor(_C_GRID))

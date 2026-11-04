@@ -1,4 +1,4 @@
-"""VientoMX — interfaz gráfica (Streamlit).
+"""iik — interfaz gráfica (Streamlit).
 
 Ejecutar:  streamlit run app/streamlit_app.py
 """
@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tema  # noqa: E402
 from vientomx import aep, climate, gwa, layout, met, osm, pdf_report, project_io, report, terrain, turbines, wtk  # noqa: E402
 
-st.set_page_config(page_title="VientoMX · Evaluación de recurso eólico", page_icon="🌬️", layout="wide")
+st.set_page_config(page_title="iik · Evaluación de recurso eólico", page_icon=tema.favicon(), layout="wide")
 
 SS = st.session_state
 ui = tema.aplicar(SS)  # estilo de la interfaz: «Clásica» o la variante «Nothing» (oscuro / claro)
@@ -43,6 +43,34 @@ CUR_UI: dict[str, dict] = {}  # opciones elegidas en cada paso durante esta ejec
 
 for _m in SS.pop("io_msgs", []):  # avisos de cargas hechas en la ejecución anterior
     ui.notify(_m)
+
+# ------------------------------------------------------------------ navegación por pasos
+STEP_TABS = ["① Sitio y layout", "② Viento", "③ Terreno", "④ Aerogenerador", "⑤ Simulación", "⑥ Resultados",
+             "📖 Método"]
+N_STEPS = 6  # la última pestaña (Método) no es un paso
+
+
+def _steps_done() -> list[bool]:
+    """Pasos 1–6 configurados con éxito (Simulación y Resultados se completan juntos al calcular la AEP)."""
+    return [SS.layout is not None and len(SS.layout) > 0, SS.met is not None,
+            SS.grid is not None and SS.grid.elev is not None, SS.turbine is not None,
+            SS.results is not None, SS.results is not None]
+
+
+def _steps_unlocked(done) -> list[bool]:
+    """Un paso se habilita cuando todos los anteriores están configurados. Método siempre está disponible."""
+    return [all(done[:i]) for i in range(N_STEPS)] + [True]
+
+
+def _first_pending(done) -> int:
+    return next((i for i, d in enumerate(done) if not d), N_STEPS - 1)
+
+
+def _goto(i: int, rerun: bool = True):
+    """Cambia a la pestaña i (0 = paso 1) en la siguiente ejecución."""
+    SS.goto_tab = int(i)
+    if rerun:
+        st.rerun()
 
 
 @st.cache_resource(show_spinner="Cargando librería de aerogeneradores…")
@@ -201,6 +229,11 @@ def _load_uploader(kind, label, types, help=None):
         return
     SS.setdefault("io_msgs", []).insert(0, msg)
     SS.io_ver += 1
+    nxt = {"layout": 1, "viento": 2, "terreno": 3, "turbina": 4}.get(kind)
+    if kind == "proyecto":
+        nxt = _first_pending(_steps_done())
+    if nxt is not None:
+        _goto(nxt, rerun=False)
     st.rerun()
 
 
@@ -449,15 +482,14 @@ def _results_hero(s):
 
 
 # ------------------------------------------------------------------ sidebar
-STEPS = [("Sitio y layout", SS.layout is not None), ("Datos de viento", SS.met is not None),
-         ("Terreno y rugosidad", SS.grid is not None and SS.grid.elev is not None),
-         ("Aerogenerador", SS.turbine is not None), ("Simulación", SS.results is not None)]
+DONE = _steps_done()
+STEPS = list(zip(["Sitio y layout", "Datos de viento", "Terreno y rugosidad", "Aerogenerador", "Simulación"], DONE))
 with st.sidebar:
     if ui.nothing:
-        st.html(tema.sidebar_brand(STEPS))
+        st.html(tema.sidebar_brand(STEPS, ui.dark))
         st.caption("Evaluación de recurso eólico y producción anual para parques eólicos en México.")
     else:
-        st.title("🌬️ VientoMX")
+        st.html(tema.brand_header(dark=st.context.theme.type == "dark"))
         st.caption("Evaluación de recurso eólico y producción anual para parques eólicos en México.")
         st.markdown("**Avance del estudio**\n\n" + "\n".join(f"- {ok(done)} {i} · {name}"
                                                              for i, (name, done) in enumerate(STEPS, 1)))
@@ -474,19 +506,36 @@ with st.sidebar:
         terrain.flat_terrain(g, 30, 0.05)
         SS.grid = g
         SS.results = None
-        st.rerun()
+        _goto(4)  # todo listo salvo la simulación
     proj_box = st.container()  # se llena al final, cuando ya se conocen las opciones de cada paso
     st.divider()
     tema.selector()
     st.caption("Datos: ERA5 (Copernicus/ECMWF), NASA POWER, Copernicus DEM, ESA WorldCover, NREL turbine-models, OEDB.")
+    st.html(tema.credit())
 
-tabs = st.tabs([L(x) for x in ["① Sitio y layout", "② Viento", "③ Terreno", "④ Aerogenerador", "⑤ Simulación",
-                               "⑥ Resultados", "📖 Método"]])
+# Pestañas de pasos con estado: se puede cambiar de pestaña desde el código (avance automático al terminar un
+# paso) y las de pasos aún no habilitados quedan bloqueadas (en gris, o tachadas en la variante Nothing).
+UNLOCKED = _steps_unlocked(DONE)
+tab_labels = [L(x) for x in STEP_TABS]
+cur_tab = tab_labels.index(SS["pasos"]) if SS.get("pasos") in tab_labels else SS.get("paso_idx", 0)
+if "goto_tab" in SS:
+    cur_tab = SS.pop("goto_tab")
+if not UNLOCKED[cur_tab]:
+    cur_tab = _first_pending(DONE)
+SS.paso_idx, SS["pasos"] = cur_tab, tab_labels[cur_tab]
+tabs = st.tabs(tab_labels, key="pasos", on_change="rerun")
+st.html(tema.steps_tabs_css("pasos", DONE + [False], UNLOCKED, ui.nothing, ui.dark))
+
+
+def _next_button(i: int):
+    """Botón «Continuar» al final del paso i (0 = paso 1), visible cuando el paso ya está configurado."""
+    if _steps_done()[i] and st.button(L(f"Continuar al paso {i + 2} →"), key=f"next_{i}", type="primary"):
+        _goto(i + 1)
 
 # ------------------------------------------------------------------ 1. layout
 with tabs[0]:
     ui.header(1, "Sitio y ubicación de aerogeneradores")
-    _step_io("layout", _ser_layout(), "VientoMX.vmx-layout.json", ["json"],
+    _step_io("layout", _ser_layout(), "iik.vmx-layout.json", ["json"],
              "coordenadas, ID y altura de buje de cada turbina, y la vista del mapa (JSON).",
              "Defina primero el layout.")
     mode = st.radio("¿Cómo quiere definir el layout?", ["Seleccionar en el mapa (OpenStreetMap)",
@@ -515,6 +564,8 @@ with tabs[0]:
                 SS.results = None
                 if df.attrs.get("warning"):
                     st.warning(df.attrs["warning"])
+                else:
+                    _goto(1)  # layout listo: pasar a Viento
                 st.success(f"{len(df)} aerogeneradores cargados.")
             except Exception as e:
                 st.error(f"No se pudo leer el archivo: {e}")
@@ -541,6 +592,7 @@ with tabs[0]:
             SS.layout = layout.grid_layout(lat_c, lon_c, int(rows), int(cols), s_row, s_col, d_rot, orient)
             SS.layout_ver += 1
             SS.results = None
+            _goto(1)
 
     if SS.layout is not None:
         st.subheader(f"Layout: {len(SS.layout)} aerogeneradores")
@@ -573,6 +625,8 @@ with tabs[0]:
                 fig.update_traces(marker=dict(size=11, color=ui.color("ink", "#1f77b4")))
                 fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
                 ui.chart(fig)
+
+    _next_button(0)
 
 # ------------------------------------------------------------------ 2. viento
 with tabs[1]:
@@ -679,6 +733,7 @@ with tabs[1]:
                     SS.met, SS.met_reanalysis, SS.ref_latlon, SS.results, SS.calib = m, m, None, None, None
                     SS.calib_h, SS.calib_ref, SS.gwa_info = None, None, None
                     bar.progress(1.0, text=f"Listo: {len(m.df):,} horas")
+                    _goto(2)
                 except Exception as e:
                     st.error(f"Error en la descarga: {e}")
         else:
@@ -836,8 +891,9 @@ with tabs[1]:
                                           labels=dict(x="Hora local", y="Sector", color="α"),
                                           title=f"Exponente de cizalladura α ({m.heights[0]:g}–{m.heights[-1]:g} m)"))
         st.download_button("Descargar serie horaria (CSV)", m.df.to_csv(index_label="time_utc"), "viento_horario.csv")
+    _next_button(1)
     with io_box:
-        _step_io("viento", _ser_met(CUR_UI.get("viento")), "VientoMX.vmx-viento.zip", ["zip"],
+        _step_io("viento", _ser_met(CUR_UI.get("viento")), "iik.vmx-viento.zip", ["zip"],
                  "series horarias descargadas o medidas (CSV), reanálisis del MCP, calibración y opciones (ZIP). "
                  "Al cargarlo no hace falta volver a descargar.", "Descargue o cargue primero los datos de viento.")
 
@@ -902,8 +958,9 @@ with tabs[2]:
                 st.error(f"Error al preparar el terreno: {e}")
             else:
                 SS.terrain_ui = CUR_UI["terreno"]
+                _goto(3)
     with io_box:
-        _step_io("terreno", _ser_grid(), "VientoMX.vmx-terreno.zip", ["zip"],
+        _step_io("terreno", _ser_grid(), "iik.vmx-terreno.zip", ["zip"],
                  "elevación, rugosidad y cobertura ya preparadas en la malla de cálculo, con sus opciones (ZIP). "
                  "Al cargarlo no hace falta volver a descargar el DEM.", "Prepare o cargue primero el terreno.")
 
@@ -953,6 +1010,8 @@ with tabs[2]:
                                    "%": 100 * cnt / cnt.sum()})
                 ui.chart(px.bar(lc, x="%", y="Cobertura", orientation="h", height=260, title="Cobertura de suelo"))
 
+    _next_button(2)
+
 # ------------------------------------------------------------------ 4. turbina
 with tabs[3]:
     ui.header(4, "Aerogenerador")
@@ -966,14 +1025,25 @@ with tabs[3]:
         filt = tab[(tab["Potencia [kW]"] >= pr[0] * 1000) & (tab["Potencia [kW]"] <= pr[1] * 1000)]
         if q:
             filt = filt[filt["Modelo"].str.contains(q, case=False, regex=False)]
-        st.dataframe(filt, hide_index=True, height=300)
+        filt = filt.reset_index(drop=True)
+        tkey = f"turb_tab_{q}_{pr[0]:g}_{pr[1]:g}"  # la selección es por posición: una tabla nueva por filtro
+        ev = st.dataframe(filt, hide_index=True, height=300, key=tkey, on_select="rerun",
+                          selection_mode="single-row")
         names = filt["Modelo"].tolist()
-        cur = SS.turbine.name if SS.turbine is not None and SS.turbine.name in names else None
-        sel = st.selectbox(f"Seleccionar ({len(names)} modelos)", names, index=names.index(cur) if cur else 0) if names else None
+        rows = ev.selection.rows if ev is not None else []
+        if rows and rows[0] < len(names) and SS.get("turb_tab_sel") != (tkey, rows[0]):
+            SS.turb_tab_sel = (tkey, rows[0])  # clic en una fila de la tabla: seleccionarla también en la lista
+            SS.turb_sel = names[rows[0]]
+        if names and SS.get("turb_sel") not in names:
+            cur = SS.turbine.name if SS.turbine is not None and SS.turbine.name in names else None
+            SS.turb_sel = cur or names[0]
+        sel = st.selectbox(f"Seleccionar ({len(names)} modelos)", names, key="turb_sel",
+                           help="También puede hacer clic en una fila de la tabla.") if names else None
         if sel and st.button("Usar este modelo", type="primary"):
             SS.turbine, SS.results = lib[sel], None
             if lib[sel].hub_heights:
                 SS.hub_height = float(lib[sel].hub_heights[0])
+            _goto(4)
         with st.expander("Agregar curva propia (CSV de ficha técnica)"):
             upt = st.file_uploader("CSV con columnas: velocidad [m/s], potencia [kW], Ct (opcional)", type=["csv"])
             nm = st.text_input("Nombre", "Mi turbina")
@@ -982,6 +1052,7 @@ with tabs[3]:
                 try:
                     SS.turbine, SS.results = turbines.load_turbine_csv(upt, nm, dd), None
                     st.success("Curva cargada.")
+                    _goto(4)
                 except Exception as e:
                     st.error(str(e))
         SS.hub_height = st.number_input("Altura de buje [m]", 20.0, 250.0, float(SS.hub_height), 1.0)
@@ -1011,9 +1082,11 @@ with tabs[3]:
         else:
             st.info("Seleccione un modelo de la librería.")
     with io_box:
-        _step_io("turbina", _ser_turbine(), "VientoMX.vmx-turbina.json", ["json"],
+        _step_io("turbina", _ser_turbine(), "iik.vmx-turbina.json", ["json"],
                  "modelo, diámetro, curva de potencia y Ct completas y altura de buje (JSON). Sirve también para "
                  "compartir curvas propias.", "Seleccione primero un aerogenerador.")
+
+    _next_button(3)
 
 # ------------------------------------------------------------------ 5. simulación
 with tabs[4]:
@@ -1067,7 +1140,7 @@ with tabs[4]:
                             "losses": dict(zip(ldf["Concepto"], ldf["Pérdida [%]"].astype(float))),
                             "uncertainty": {r.Componente: (r.Tipo, float(r.Valor)) for r in udf.itertuples()}}
     with io_box:
-        _step_io("simulacion", _ser_sim(CUR_UI["simulacion"]), "VientoMX.vmx-simulacion.json", ["json"],
+        _step_io("simulacion", _ser_sim(CUR_UI["simulacion"]), "iik.vmx-simulacion.json", ["json"],
                  "modelo y parámetros de estelas, opciones de flujo y densidad, pérdidas e incertidumbres (JSON).")
 
     if st.button(L("▶ Calcular AEP"), type="primary", disabled=bool(missing)):
@@ -1097,6 +1170,8 @@ with tabs[4]:
             st.success(f"Cálculo terminado. Vea la pestaña «{L('⑥ Resultados')}».")
         except Exception as e:
             st.exception(e)
+        else:
+            _goto(5)
 
 # ------------------------------------------------------------------ 6. resultados
 with tabs[5]:
@@ -1190,8 +1265,8 @@ with tabs[5]:
                   "Rugosidad": SS.grid.meta.get("z0_source") if SS.grid else "-", "Modelo de estelas": SS.cfg.wake_model,
                   "k": SS.cfg.wake_k, "TI": SS.cfg.ti, "Altura de buje": SS.cfg.hub_height}
         c1, c2 = st.columns(2)
-        c1.download_button(L("⬇ Reporte Excel"), report.results_to_excel(r, inputs), "VientoMX_resultados.xlsx", type="primary")
-        c2.download_button(L("⬇ Serie horaria de producción (CSV)"), report.hourly_to_csv(r), "VientoMX_produccion_horaria.csv")
+        c1.download_button(L("⬇ Reporte Excel"), report.results_to_excel(r, inputs), "iik_resultados.xlsx", type="primary")
+        c2.download_button(L("⬇ Serie horaria de producción (CSV)"), report.hourly_to_csv(r), "iik_produccion_horaria.csv")
 
         st.subheader("Reporte PDF del estudio")
         st.caption("Incluye todas las etapas (sitio, viento, terreno, aerogenerador, simulación) con su configuración, "
@@ -1216,7 +1291,7 @@ with tabs[5]:
                 except Exception as e:
                     st.error(f"No se pudo generar el PDF: {e}")
         if SS.get("pdf_bytes") and SS.get("pdf_key") == pdf_key:
-            st.download_button(L("⬇ Descargar reporte PDF"), SS.pdf_bytes, "VientoMX_reporte.pdf", "application/pdf",
+            st.download_button(L("⬇ Descargar reporte PDF"), SS.pdf_bytes, "iik_reporte.pdf", "application/pdf",
                                type="primary")
         elif SS.get("pdf_bytes"):
             st.caption("Los resultados o los datos del reporte cambiaron: vuelva a generar el PDF.")
@@ -1232,6 +1307,6 @@ with proj_box:
                    f"aerogenerador y simulación). Los resultados se recalculan con {L('▶ Calcular AEP')}.")
         ser_p = _ser_project()
         st.download_button(L("⬇ Guardar proyecto (ZIP)"), ser_p if ser_p is not None else b"",
-                           "VientoMX.vmx-proyecto.zip", mime="application/zip", disabled=ser_p is None,
+                           "iik.vmx-proyecto.zip", mime="application/zip", disabled=ser_p is None,
                            on_click="ignore", key="io_save_proyecto", width="stretch")
         _load_uploader("proyecto", "Cargar proyecto", ["zip"])

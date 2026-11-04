@@ -52,3 +52,20 @@ def test_temas_de_streamlit_validos():
     for dark in (True, False):
         for k in tema._streamlit_theme(dark):
             assert f"theme.{k}" in config._config_options_template, k
+
+
+def test_pestanas_bloqueadas_y_progreso():
+    css = tema.steps_tabs_css("pasos", [True, True, False, False, False, False, False],
+                              [True, True, True, False, False, False, True], nothing=True, dark=True)
+    assert ".st-key-pasos" in css
+    assert "nth-child(4){pointer-events:none" in css and "line-through" in css  # paso 4 bloqueado y tachado
+    assert "nth-child(2)::after{background:#FFFFFF;right:0px}" in css  # la barra llega hasta el último paso listo
+    clasica = tema.steps_tabs_css("pasos", [True] + [False] * 6, [True, True] + [False] * 4 + [True], nothing=False)
+    assert "opacity:.35" in clasica and "line-through" not in clasica
+
+
+def test_logo_y_estilo_por_defecto():
+    assert tema.DEFAULT == "nothing-oscuro"
+    img = tema.logo_html(dark=True, width=50)
+    assert img.startswith('<img src="data:image/svg+xml;base64,') and 'width="96"' in img  # ancho mínimo 96 px
+    assert "Gutiérrez Ortiz" in tema.credit()
