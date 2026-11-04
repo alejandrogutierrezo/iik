@@ -140,7 +140,8 @@ las pestañas funciona como barra de progreso: se pinta bajo cada paso terminado
 Al final de la barra lateral, **Estilo de la interfaz** cambia el aspecto sin
 tocar los datos ni el estudio en curso. La app abre en **Nothing · oscuro**.
 
-- **Clásica**: el tema estándar de Streamlit.
+- **Clásica**: colores y acomodo estándar de Streamlit, con las mismas tipografías
+  que la variante Nothing (Space Grotesk; cifras y código en Space Mono).
 - **Nothing · oscuro** y **Nothing · claro**: variante monocroma inspirada en el
   sistema de diseño de Nothing. Fondo negro OLED o papel `#F5F5F5`, tipografías
   Space Grotesk / Space Mono / Doto (Google Fonts), etiquetas de instrumento en

@@ -52,6 +52,14 @@ TOKENS = {
 }
 
 
+# La clásica conserva colores y acomodo de Streamlit, pero usa las mismas tipografías que la variante Nothing
+CLASSIC_FONTS = {
+    "font": _GROTESK + ", sans-serif",
+    "headingFont": _GROTESK + ", sans-serif",
+    "codeFont": _MONO + ", monospace",
+}
+
+
 def _streamlit_theme(dark: bool) -> dict:
     t = TOKENS[dark]
     return {
@@ -250,7 +258,8 @@ class Estilo:
 
     def chart(self, fig, **kw):
         """st.plotly_chart con la plantilla del estilo activo."""
-        if not self.nothing:
+        if not self.nothing:  # colores de Streamlit, tipografía de la variante Nothing
+            fig.update_layout(font_family="'Space Grotesk', 'DM Sans', sans-serif")
             return st.plotly_chart(fig, **kw)
         fig.layout.template = plotly_template(self.dark)  # reemplaza (no mezcla) la plantilla de plotly
         fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
@@ -534,11 +543,14 @@ def aplicar(SS, key: str = "ui_estilo") -> Estilo:
     original = _original_theme()
     nothing = k != CLASICA
     dark = k != "nothing-claro"
-    if _set_streamlit_theme(_streamlit_theme(dark) if nothing else original):
+    if _set_streamlit_theme(_streamlit_theme(dark) if nothing else {**original, **CLASSIC_FONTS}):
         st.rerun()  # el tema de Streamlit se envía al navegador al inicio de cada ejecución
     ui = Estilo(key=k, nothing=nothing, dark=dark, t=TOKENS[dark])
     if nothing:
         st.html(f"<style>{ui.css()}</style>")
+    else:  # cifras en Space Mono, como en la variante Nothing (colores y acomodo de la clásica intactos)
+        st.html("<style>[data-testid='stMetricValue']{font-family:'Space Mono','JetBrains Mono',monospace;"
+                "letter-spacing:-.02em}</style>")
     return ui
 
 

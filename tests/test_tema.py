@@ -69,3 +69,9 @@ def test_logo_y_estilo_por_defecto():
     img = tema.logo_html(dark=True, width=50)
     assert img.startswith('<img src="data:image/svg+xml;base64,') and 'width="96"' in img  # ancho mínimo 96 px
     assert "Gutiérrez Ortiz" in tema.credit()
+
+
+def test_clasica_usa_tipografias_nothing():
+    assert "Space Grotesk" in tema.CLASSIC_FONTS["font"] and "Space Mono" in tema.CLASSIC_FONTS["codeFont"]
+    assert set(tema.CLASSIC_FONTS) <= set(tema._streamlit_theme(True))  # solo fuentes, ningún color
+    assert not any("Color" in k for k in tema.CLASSIC_FONTS)
