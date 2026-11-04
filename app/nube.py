@@ -12,7 +12,7 @@ Variables (en el panel de *secrets* o en el entorno):
 
 ``IIK_SERVIDOR_COMPARTIDO``  1 / 0. Si no se define, se activa sola en Streamlit Community Cloud.
 ``IIK_TAREAS_SIMULTANEAS``   cálculos pesados a la vez (por defecto 2 en modo compartido; 0 = sin límite).
-``IIK_MAX_CELDAS``           celdas máximas de la malla de terreno (por defecto 160 000 en modo compartido).
+``IIK_MAX_CELDAS``           celdas máximas de la malla de terreno (por defecto 400 000 en modo compartido).
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def compartido() -> bool:
 
 def max_celdas() -> int:
     """Celdas máximas de la malla de terreno (0 = sin límite)."""
-    return _int_env("IIK_MAX_CELDAS", 160_000 if compartido() else 0)
+    return _int_env("IIK_MAX_CELDAS", 400_000 if compartido() else 0)
 
 
 def max_tareas() -> int:

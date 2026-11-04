@@ -165,8 +165,9 @@ Para que otras personas (p. ej. un grupo de alumnos) usen iik desde el navegador
    * Repository: `alejandrogutierrezo/iik` · Branch: `main`
    * Main file path: `app/streamlit_app.py`
    * App URL: el nombre que quiera, p. ej. `iik-wra` → `https://iik-wra.streamlit.app`
-3. En **Advanced settings** elija **Python 3.12** (las versiones de `requirements.txt` piden 3.12 o 3.13)
-   y, si quiere, pegue los secretos (vea `.streamlit/secrets.toml.example`; todos son opcionales).
+3. En **Advanced settings** elija **Python 3.12**. Las versiones de `requirements.txt` piden 3.12 o 3.13, y
+   `turbine-models` no se instala en 3.14. La versión de Python no se puede cambiar después: hay que
+   borrar la app y volver a publicarla con el mismo nombre de URL. Ahí mismo puede pegar los secretos (vea `.streamlit/secrets.toml.example`; todos son opcionales).
 4. **Deploy**. La primera vez tarda unos minutos en instalar las dependencias. Después, cada cambio que
    llegue a `main` se publica solo.
 
@@ -182,8 +183,14 @@ En Streamlit Community Cloud la app se pone sola en **modo servidor compartido**
   el tema de Streamlit es uno solo por servidor;
 * solo corren 2 cálculos pesados a la vez (terreno y AEP); los demás esperan su turno con un aviso
   (`IIK_TAREAS_SIMULTANEAS`);
-* la malla de terreno se limita a 160 000 celdas, unos 20 km por lado a 50 m (`IIK_MAX_CELDAS`); si el
+* la malla de terreno se limita a 400 000 celdas, unos 30 km por lado a 50 m (`IIK_MAX_CELDAS`); si el
   área es mayor se usa una resolución más gruesa y se avisa.
+
+Estos valores están pensados para un grupo pequeño (unos 5 alumnos a la vez). Un cálculo de AEP de 24
+turbinas con 20 años horarios y la malla máxima usa unos 250 MB además de los ~250 MB de la app, así que
+2 a la vez caben con holgura. Con grupos más grandes conviene bajar `IIK_MAX_CELDAS`; con
+`IIK_TAREAS_SIMULTANEAS = "3"` se espera menos, a cambio de más riesgo de pasar el límite de memoria
+(si eso pasa, la app se reinicia para todos).
 
 El servidor gratuito tiene poca memoria (entre 690 MB y 2.7 GB según la carga) y se duerme tras 12 h sin
 visitas; cualquiera con acceso lo despierta con un clic. Streamlit da más recursos gratis a instituciones
