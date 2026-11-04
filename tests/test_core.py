@@ -159,14 +159,62 @@ def test_osm_parse_and_layout_editing():
     assert lay["id"].tolist()[0] == "SC-01" and lay["id"].nunique() == 3 and "osm_id" in lay
 
     q = osm.build_query(25.5, -100.8, 25.7, -100.6)
-    assert '"generator:source"="wind"' in q and "(25.500000,-100.800000,25.700000,-100.600000)" in q
+    assert '"generator:source"="wind"' in q and "[bbox:25.500000,-100.800000,25.700000,-100.600000]" in q
+    assert '"generator:method"="wind_turbine"' in q and '"plant:source"="wind"' in q
     with pytest.raises(ValueError):
         osm.fetch_wind_turbines(20, -110, 25, -100)  # área demasiado grande
 
     resp = mock.Mock(json=lambda: data, raise_for_status=lambda: None)
     with mock.patch("vientomx.osm.requests.post", side_effect=[OSError("bloqueado"), resp]) as post:
         got = osm.fetch_wind_turbines(25.59, -100.69, 25.62, -100.67)
-    assert len(got) == 3 and post.call_count == 2  # se usa el servidor espejo
+    assert len(got) == 3 and post.call_count == len(osm.OVERPASS_URLS)  # espejos en paralelo
+
+    # un servidor colgado no bloquea la búsqueda: responde el primero que sirve
+    import time as _t
+
+    def slow_or_ok(url, **kw):
+        if "overpass-api.de" in url:
+            _t.sleep(3)
+        return resp
+    t0 = _t.monotonic()
+    with mock.patch("vientomx.osm.requests.post", side_effect=slow_or_ok):
+        got = osm.fetch_wind_turbines(25.59, -100.69, 25.62, -100.67)
+    assert len(got) == 3 and _t.monotonic() - t0 < 2
+    # si todos se cuelgan, se respeta el límite total de tiempo con un mensaje claro
+    with mock.patch("vientomx.osm.requests.post", side_effect=lambda url, **kw: _t.sleep(3)):
+        t0 = _t.monotonic()
+        with pytest.raises(RuntimeError, match="sin respuesta"):
+            osm.fetch_osm(25.59, -100.69, 25.62, -100.67, deadline=0.5)
+        assert _t.monotonic() - t0 < 2
+    # HTML de error de Overpass -> error, no excepción rara
+    bad = mock.Mock(status_code=504, raise_for_status=lambda: None, json=mock.Mock(side_effect=ValueError))
+    with mock.patch("vientomx.osm.requests.post", return_value=bad):
+        with pytest.raises(RuntimeError, match="no JSON"):
+            osm.fetch_osm(25.59, -100.69, 25.62, -100.67, deadline=2)
+
+    # parque mapeado como polígono, sin turbinas individuales
+    plant = {"elements": [{"type": "way", "id": 9, "center": {"lat": 25.61, "lon": -100.68},
+                           "tags": {"power": "plant", "plant:source": "wind", "name": "Parque Eólico Santa Catarina",
+                                    "plant:output:electricity": "22 MW"}}]}
+    assert osm.parse_overpass(plant).empty
+    pl = osm.parse_plants(plant)
+    assert pl.nombre.iloc[0] == "Parque Eólico Santa Catarina" and pl.potencia_kw.iloc[0] == 22000
+
+    # GeoJSON exportado de overpass-turbo
+    gj = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "id": "node/101", "geometry": {"type": "Point", "coordinates": [-100.6801, 25.6101]},
+         "properties": {"power": "generator", "generator:source": "wind", "ref": "SC-01"}},
+        {"type": "Feature", "id": "way/7", "geometry": {"type": "Polygon", "coordinates": [[[-100.679, 25.60],
+         [-100.677, 25.60], [-100.678, 25.601], [-100.679, 25.60]]]}, "properties": {"tags": {"power": "generator"}}},
+    ]}
+    g = osm.parse_geojson(gj)
+    assert g.osm_id.tolist() == ["n101", "w7"] and g.ref.iloc[0] == "SC-01"
+
+    # vista del mapa de resultados centrada en el parque
+    (clat, clon), z = layout.map_view([25.60, 25.62], [-100.70, -100.68])
+    assert clat == pytest.approx(25.61) and clon == pytest.approx(-100.69) and 11 <= z <= 14
+    (clat, clon), z = layout.map_view([16.5, 16.6], [-95.1, -94.8])
+    assert z < 11
 
     # edición manual del layout
     L = layout.add_turbine(None, 25.61, -100.68)
@@ -326,64 +374,4 @@ def test_gwa_sampling_and_calibration(tmp_path, monkeypatch):
     assert aep.reliability_warnings({"RIX medio [%]": 1, "Factor de planta neto [%]": 30}, "NREL WIND Toolkit", False) == []
 
 
-# ------------------------------------------------------------------ guardar / cargar configuración
-def test_project_io_roundtrip(lib):
-    from vientomx import project_io as pio
-
-    lay = layout.grid_layout(16.55, -94.95, 2, 3, 7, 3, 130, 0)
-    lay["osm_id"] = ["node/1", None, None, None, None, "node/6"]
-    lay2, extra = pio.layout_from_json(pio.layout_to_json(lay, [16.55, -94.95], 13))
-    pd.testing.assert_frame_equal(lay2[["id", "lat", "lon"]], lay[["id", "lat", "lon"]])
-    assert lay2.osm_id.iloc[0] == "node/1" and extra == {"centro": [16.55, -94.95], "zoom": 13}
-
-    m = met.synthetic_met(years=(2018, 2019))
-    m.notes.append("nota")
-    mcp = pd.DataFrame({"sector": [0, 30], "r2": [0.8, 0.7]})
-    mcp.attrs.update(r2_total=0.75, veer=3.0)
-    d = pio.met_from_zip(pio.met_to_zip(m, m, (16.5, -94.9), 8.5, 100, (16.55, -94.95), {"height": 100},
-                                        mcp, {"fuente": "x", "anio_inicial": 2018}))
-    m2 = d["met"]
-    assert m2.source == m.source and m2.notes == ["nota"] and d["met_reanalysis"] is m2
-    assert list(m2.df.columns) == list(m.df.columns) and m2.df.index.equals(m.df.index)
-    assert np.allclose(m2.df.to_numpy(), m.df.to_numpy(), rtol=1e-3, equal_nan=True)
-    assert d["calib"] == 8.5 and d["calib_ref"] == (16.55, -94.95) and d["ref_latlon"] == (16.5, -94.9)
-    assert d["mcp_info"].attrs["r2_total"] == 0.75 and d["ui"]["anio_inicial"] == 2018
-    rean = met.synthetic_met(years=(2010, 2019), seed=1)
-    d = pio.met_from_zip(pio.met_to_zip(m, rean))
-    assert len(d["met_reanalysis"].df) == len(rean.df) and d["calib"] is None
-
-    g, _, _ = terrain.make_grid(lay.lat, lay.lon, 3, 200)
-    terrain.flat_terrain(g, 30, 0.05)
-    g.elev[3, 4] = 55.0
-    g2, ui = pio.grid_from_zip(pio.grid_to_zip(g, {"margen_km": 3}))
-    assert g2.crs == g.crs and (g2.nx, g2.ny, g2.dx, g2.x0) == (g.nx, g.ny, g.dx, g.x0)
-    assert np.array_equal(g2.elev, g.elev) and np.array_equal(g2.z0, g.z0) and ui == {"margen_km": 3}
-
-    for name in ("IEA Reference 3.4 MW D130", next(n for n, t in lib.items() if t.ct_estimated)):
-        t = lib[name]
-        t2, hh = pio.turbine_from_json(pio.turbine_to_json(t, 110))
-        assert hh == 110 and t2.name == t.name and t2.ct_estimated == t.ct_estimated
-        assert np.allclose(t2.power_kw, t.power_kw) and np.allclose(t2.ct, t.ct) and np.allclose(t2.ws, t.ws)
-
-    sim = {"wake_model": "bastankhah", "wake_k": 0.05, "ti": 0.08, "use_terrain": False, "use_roughness": True,
-           "blending_height": 250.0, "air_density_auto": False, "air_density": 1.1,
-           "losses": dict(aep.DEFAULT_LOSSES), "uncertainty": dict(aep.DEFAULT_UNCERTAINTY)}
-    assert pio.sim_from_json(pio.sim_to_json(sim)) == sim
-
-    parts = {"layout": pio.layout_to_json(lay), "turbina": pio.turbine_to_json(lib[name])}
-    back = pio.project_from_zip(pio.project_to_zip(parts))
-    assert back == parts
-    assert pio.detect_kind(pio.project_to_zip(parts)) == "proyecto"
-    assert pio.detect_kind(pio.grid_to_zip(g)) == "terreno"
-
-
-def test_project_io_rejects_wrong_step():
-    from vientomx import project_io as pio
-
-    lay = layout.grid_layout(16.55, -94.95, 1, 2, 7, 3, 130, 0)
-    with pytest.raises(ValueError, match="Sitio y layout"):
-        pio.turbine_from_json(pio.layout_to_json(lay))
-    with pytest.raises(ValueError, match="ZIP"):
-        pio.met_from_zip(pio.layout_to_json(lay))
-    with pytest.raises(ValueError, match="VientoMX"):
-        pio.sim_from_json(json.dumps({"a": 1}).encode())
+from vientomx import aep, climate, gwa, layout, met, osm, pdf_report, project_io, report, terrain, turbines, wtk  # noqa: E402

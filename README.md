@@ -25,8 +25,9 @@ pasos se pasa de una lista de coordenadas a la AEP P50/P90 del parque:
 5. **Simulación**: orografía + rugosidad + estelas (Jensen o Gaussiano de
    Bastankhah) por dirección, corrección por densidad, pérdidas editables.
 6. **Resultados**: AEP bruta/neta por turbina, P50/P75/P90/P99, mapa de estelas,
-   perfil 12×24, producción por año, rosa de energía, exportación a Excel y
-   serie horaria CSV.
+   perfil 12×24, producción por año, rosa de energía, exportación a Excel,
+   serie horaria CSV y **reporte PDF** del estudio completo (configuración,
+   supuestos y advertencias de cada etapa, y resultados con tablas y gráficas).
 
 La fidelidad objetivo está **entre SAM y WAsP**. El detalle está en
 [`docs/metodo.md`](docs/metodo.md) (también visible en la pestaña *Método*).
@@ -75,17 +76,25 @@ coma o tabulador. KML/KMZ: cada Placemark de tipo punto es una turbina.
 En el paso 1, modo **Seleccionar en el mapa**:
 
 * **Buscar turbinas de OSM aquí** consulta la Overpass API y muestra en naranja
-  los nodos `power=generator` + `generator:source=wind` del área visible (el
-  icono de aerogenerador de openstreetmap.org). Se toman con un clic, o todas con
-  **Usar todas las de OSM**. Se conservan `ref`/`name` como id, y la altura de
+  los nodos `power=generator` + `generator:source=wind` (o
+  `generator:method=wind_turbine`) del área visible (el icono de aerogenerador de
+  openstreetmap.org). La consulta va a cuatro servidores espejo en paralelo y se
+  toma la primera respuesta válida; nunca espera más de 40 s. Si la vista es muy
+  amplia busca ±12 km alrededor del centro, y si el parque solo está mapeado como
+  polígono (`power=plant`) lo avisa. Se toman con un clic, o todas con
+  **✅ Aceptar las N turbinas de OSM y agregarlas al layout**. Se conservan `ref`/`name` como id, y la altura de
   buje si está etiquetada (`height:hub`); la columna `osm_id` identifica su origen.
 * Con **Agregar / Mover / Borrar turbina** se edita el layout haciendo clic; las
   coordenadas también se pueden corregir en la tabla.
 * El fondo **Satélite (Esri)** ayuda a verificar que las posiciones de OSM
   coinciden con las torres reales; OSM es colaborativo y puede tener errores u
   omisiones.
-* Si la red bloquea los servidores públicos de Overpass, defina
-  `VIENTOMX_OVERPASS_URL` con otro servidor.
+* Si la red bloquea los servidores públicos de Overpass, exporte las turbinas
+  como GeoJSON desde [overpass-turbo.eu](https://overpass-turbo.eu) y súbalo en
+  el recuadro «¿Overpass no responde…?», o defina `VIENTOMX_OVERPASS_URL` con
+  otro servidor.
+* Los mapas de layout y de resultados se centran y ajustan el zoom
+  automáticamente al parque.
 
 Datos de turbinas © colaboradores de OpenStreetMap, licencia ODbL.
 

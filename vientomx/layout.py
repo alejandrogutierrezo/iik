@@ -160,6 +160,36 @@ def distance_m(lat1, lon1, lat2, lon2):
     return 2 * R * np.arcsin(np.sqrt(a))
 
 
+def map_view(lat, lon, width_px: int = 700, height_px: int = 450, pad: float = 0.25, max_zoom: float = 14.0,
+             tile_px: int = 512):
+    """Centro (lat, lon) y zoom web-Mercator para que todas las turbinas quepan en un mapa de
+    ``width_px`` x ``height_px`` con un margen ``pad`` (fracción) a cada lado.
+
+    ``tile_px`` = 512 para los mapas de Plotly (MapLibre) y 256 para Leaflet/folium."""
+    lat = np.asarray(lat, dtype=float)
+    lon = wrap_lon(np.atleast_1d(np.asarray(lon, dtype=float)))
+    lat, lon = np.atleast_1d(lat), np.atleast_1d(lon)
+    ok = np.isfinite(lat) & np.isfinite(lon)
+    if not ok.any():
+        return (23.5, -102.0), 4.0
+    lat, lon = lat[ok], lon[ok]
+
+    def merc_y(phi):  # en unidades de "mundo" [0, 1)
+        phi = np.clip(np.radians(phi), -1.48, 1.48)
+        return np.log(np.tan(np.pi / 4 + phi / 2)) / (2 * np.pi)
+
+    clat, clon = (lat.min() + lat.max()) / 2, (lon.min() + lon.max()) / 2
+    dx = (lon.max() - lon.min()) / 360.0
+    dy = float(merc_y(lat.max()) - merc_y(lat.min()))
+    frac = 1 + 2 * pad
+    z = []
+    for span, px in ((dx, width_px), (dy, height_px)):
+        if span > 0:
+            z.append(np.log2(px / (tile_px * span * frac)))
+    zoom = min(z) if z else max_zoom
+    return (float(clat), float(clon)), float(np.clip(np.floor(zoom * 4) / 4, 1.0, max_zoom))
+
+
 def nearest(df: pd.DataFrame | None, lat: float, lon: float):
     """(índice, distancia_m) de la turbina más cercana, o (None, inf) si no hay."""
     if df is None or df.empty:
