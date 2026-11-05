@@ -1,0 +1,27 @@
+iik · Evaluación de recurso eólico
+==================================
+
+INSTALAR
+1. Arrastre «iik» a la carpeta «Aplicaciones».
+2. Expulse este disco (iik) y abra iik desde Aplicaciones o Launchpad.
+
+LA PRIMERA VEZ QUE LA ABRA
+iik no está firmada con un certificado de Apple, así que macOS la bloquea la primera vez
+(«Apple no pudo verificar que iik no contenga software malicioso»). Para permitirla:
+
+  a) Haga doble clic en iik y, en el aviso, elija «Aceptar» (no «Trasladar a la papelera»).
+  b) Abra Configuración del Sistema > Privacidad y seguridad. Abajo aparece
+     «Se bloqueó el uso de "iik"...»: haga clic en «Abrir de todos modos» y confirme con su contraseña.
+  c) Vuelva a abrir iik. Desde entonces abre normalmente.
+
+  Alternativa en la Terminal (una sola vez):
+      xattr -dr com.apple.quarantine /Applications/iik.app
+
+USO
+iik se abre en su navegador (Safari, Chrome...). No tiene ventana propia ni ícono en el Dock.
+La primera vez tarda unos 20 a 40 segundos en aparecer; después, unos segundos.
+Para salir use el botón «CERRAR IIK» de la barra lateral, o cierre todas las pestañas de iik
+(se cierra solo a los 3 minutos). Guarde su proyecto antes de salir.
+
+Requiere una Mac con procesador Apple (M1, M2, M3, M4...) y macOS 15 Sequoia o posterior
+(todas las Mac con procesador M pueden actualizarse gratis a esa versión).

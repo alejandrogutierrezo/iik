@@ -544,6 +544,13 @@ with st.sidebar:
     tema.selector()
     st.caption("Datos: ERA5 (Copernicus/ECMWF), NASA POWER, Copernicus DEM, ESA WorldCover, NREL turbine-models, OEDB.")
     st.html(tema.credit())
+    if os.environ.get("IIK_ESCRITORIO") == "1":  # versión instalada (instalador/lanzador.py)
+        if st.button("Cerrar iik", help="Cierra iik en esta computadora. Guarde antes su proyecto."):
+            import threading
+
+            st.info("iik se cerró. Ya puede cerrar esta pestaña.")
+            threading.Timer(1.0, os._exit, (0,)).start()  # deja llegar el aviso al navegador
+            st.stop()
 
 # Pestañas de pasos con estado: se puede cambiar de pestaña desde el código (avance automático al terminar un
 # paso) y las de pasos aún no habilitados quedan bloqueadas (en gris, o tachadas en la variante Nothing).

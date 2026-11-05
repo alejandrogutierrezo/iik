@@ -155,6 +155,51 @@ El logotipo y las reglas de marca están en [`brand/`](brand/BRAND.md). Las fuen
 internet se usan las tipografías de respaldo del sistema. El código está en
 [`app/tema.py`](app/tema.py).
 
+## Instalador para alumnos (Windows y Mac, sin instalar Python)
+
+Para que los alumnos corran iik en su propia computadora, sin internet de por medio para la app ni
+instalar Python, hay instaladores que incluyen todo (Python, Streamlit y las librerías):
+
+| Sistema | Archivo | Tamaño aprox. |
+|---|---|---|
+| Windows 10/11 (64 bits) | `iik-<versión>-windows-instalador.exe` | ~140 MB |
+| Mac con procesador M (M1, M2, M3...), macOS 15 Sequoia o posterior | `iik-<versión>-mac-apple-silicon.dmg` | ~180 MB |
+
+**Para el alumno.** En Windows: abrir el instalador, *Siguiente → Instalar* (no pide permisos de
+administrador) y abrir iik desde el escritorio o el menú Inicio. En Mac: abrir el `.dmg`, arrastrar iik a
+Aplicaciones y la primera vez permitirla en *Configuración del Sistema → Privacidad y seguridad → Abrir
+de todos modos* (instrucciones en el `LEEME` del disco). iik se abre en el navegador, en
+`http://127.0.0.1:8765`, y solo se ve desde esa computadora. Para salir: botón **Cerrar iik** de la barra
+lateral; también se cierra sola 3 minutos después de cerrar todas sus pestañas (en Windows, además, al
+cerrar la ventana negra).
+
+**Avisos de seguridad.** Los instaladores no están firmados con un certificado de Microsoft o Apple
+(cuestan ~100-400 USD al año), así que la primera vez Windows muestra «Windows protegió su PC» (*Más
+información → Ejecutar de todas formas*) y macOS pide el permiso de arriba. Si se consigue un
+certificado, la firma se agrega en el flujo de GitHub Actions.
+
+**Cómo se generan.** El flujo [`.github/workflows/instaladores.yml`](.github/workflows/instaladores.yml)
+los compila en GitHub Actions (Windows y Mac con procesador M) y revisa que la app arranque:
+
+* Publicar una versión: `git tag v0.1.0 && git push origin v0.1.0` → crea un *Release* en GitHub con los
+  dos instaladores; ese enlace es el que se comparte con los alumnos.
+* Probar sin publicar: pestaña *Actions → Instaladores → Run workflow*; los archivos quedan en
+  *Artifacts* de la corrida durante 30 días.
+
+Para compilarlos a mano en una computadora con Windows o Mac (Python 3.12):
+
+```bash
+pip install -r requirements.txt pyinstaller
+pyinstaller instalador/iik.spec --noconfirm   # → dist/iik/ (Windows) o dist/iik.app (Mac)
+iscc /DVersion=0.1.0 instalador\iik.iss        # Windows, con Inno Setup 6 → dist/iik-0.1.0-windows-instalador.exe
+python instalador/arreglar_mac.py dist/iik.app  # Mac: PROJ de pyproj y rasterio por separado
+bash instalador/hacer_dmg.sh 0.1.0             # Mac → dist/iik-0.1.0-mac-apple-silicon.dmg
+```
+
+El programa que arranca el servidor y abre el navegador es
+[`instalador/lanzador.py`](instalador/lanzador.py) (se puede probar con `python instalador/lanzador.py`,
+o `--verificar` para revisar el paquete). Los datos que descarga iik se guardan en `~/.vientomx/`.
+
 ## Publicar en internet (Streamlit Community Cloud)
 
 Para que otras personas (p. ej. un grupo de alumnos) usen iik desde el navegador, sin instalar nada:
