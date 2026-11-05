@@ -163,7 +163,7 @@ instalar Python, hay instaladores que incluyen todo (Python, Streamlit y las lib
 | Sistema | Archivo | Tamaño aprox. |
 |---|---|---|
 | Windows 10/11 (64 bits) | `iik-<versión>-windows-instalador.exe` | 200-250 MB |
-| Mac con procesador M (M1, M2, M3...), macOS 14 o posterior | `iik-<versión>-mac-apple-silicon.dmg` | 250-300 MB |
+| Mac con procesador M (M1, M2, M3...), macOS 15 Sequoia o posterior | `iik-<versión>-mac-apple-silicon.dmg` | 250-300 MB |
 
 **Para el alumno.** En Windows: abrir el instalador, *Siguiente → Instalar* (no pide permisos de
 administrador) y abrir iik desde el escritorio o el menú Inicio. En Mac: abrir el `.dmg`, arrastrar iik a
@@ -179,7 +179,7 @@ información → Ejecutar de todas formas*) y macOS pide el permiso de arriba. S
 certificado, la firma se agrega en el flujo de GitHub Actions.
 
 **Cómo se generan.** El flujo [`.github/workflows/instaladores.yml`](.github/workflows/instaladores.yml)
-los compila en GitHub Actions (Windows y Mac M1) y revisa que la app arranque:
+los compila en GitHub Actions (Windows y Mac con procesador M) y revisa que la app arranque:
 
 * Publicar una versión: `git tag v0.1.0 && git push origin v0.1.0` → crea un *Release* en GitHub con los
   dos instaladores; ese enlace es el que se comparte con los alumnos.

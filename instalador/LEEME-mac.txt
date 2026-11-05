@@ -23,5 +23,5 @@ La primera vez tarda unos 20 a 40 segundos en aparecer; después, unos segundos.
 Para salir use el botón «CERRAR IIK» de la barra lateral, o cierre todas las pestañas de iik
 (se cierra solo a los 3 minutos). Guarde su proyecto antes de salir.
 
-Requiere una Mac con procesador Apple (M1, M2, M3, M4...) y macOS 14 Sonoma o posterior
+Requiere una Mac con procesador Apple (M1, M2, M3, M4...) y macOS 15 Sequoia o posterior
 (todas las Mac con procesador M pueden actualizarse gratis a esa versión).

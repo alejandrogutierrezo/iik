@@ -86,7 +86,7 @@ if sys.platform == "darwin":
             "CFBundleDisplayName": "iik",
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
-            "LSMinimumSystemVersion": "14.0",
+            "LSMinimumSystemVersion": "15.0",
             "NSHighResolutionCapable": True,
             "NSHumanReadableCopyright": "GPL-3.0-or-later",
             # Sin ícono en el Dock: iik vive en el navegador y se cierra con «Cerrar iik» o al cerrar

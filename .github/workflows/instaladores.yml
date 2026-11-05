@@ -1,6 +1,6 @@
 # Compila los instaladores de iik para que los alumnos la usen sin instalar Python:
 #   * Windows 10/11 (x64): iik-<versión>-windows-instalador.exe (Inno Setup, sin permisos de administrador)
-#   * macOS 14+ con procesador Apple (M1, M2...): iik-<versión>-mac-apple-silicon.dmg
+#   * macOS 15+ con procesador Apple (M1, M2...): iik-<versión>-mac-apple-silicon.dmg
 #
 # Cuándo corre:
 #   * Al publicar una etiqueta vX.Y.Z (git tag v0.1.0 && git push origin v0.1.0): crea un Release en GitHub
@@ -96,7 +96,8 @@ jobs:
 
   mac:
     name: macOS Apple Silicon (.dmg)
-    runs-on: macos-14 # arm64 (M1)
+    # arm64 (M1). macOS 15 porque rasterio y netCDF4 solo publican ruedas arm64 para macOS 15 o posterior.
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
