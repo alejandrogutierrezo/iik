@@ -163,7 +163,7 @@ instalar Python, hay instaladores que incluyen todo (Python, Streamlit y las lib
 | Sistema | Archivo | Tamaño aprox. |
 |---|---|---|
 | Windows 10/11 (64 bits) | `iik-<versión>-windows-instalador.exe` | ~140 MB |
-| Mac con procesador M (M1, M2, M3...), macOS 15 Sequoia o posterior | `iik-<versión>-mac-apple-silicon.dmg` | 250-300 MB |
+| Mac con procesador M (M1, M2, M3...), macOS 15 Sequoia o posterior | `iik-<versión>-mac-apple-silicon.dmg` | ~180 MB |
 
 **Para el alumno.** En Windows: abrir el instalador, *Siguiente → Instalar* (no pide permisos de
 administrador) y abrir iik desde el escritorio o el menú Inicio. En Mac: abrir el `.dmg`, arrastrar iik a
