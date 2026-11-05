@@ -2,6 +2,7 @@
 # Arma el .dmg de iik para macOS a partir de dist/iik.app (lo que deja PyInstaller).
 #
 #     pyinstaller instalador/iik.spec --noconfirm
+#     python instalador/arreglar_mac.py dist/iik.app
 #     bash instalador/hacer_dmg.sh 0.1.0
 #
 # Resultado: dist/iik-<versión>-mac-apple-silicon.dmg, con la app, un acceso a Aplicaciones y las

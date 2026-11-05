@@ -192,6 +192,7 @@ Para compilarlos a mano en una computadora con Windows o Mac (Python 3.12):
 pip install -r requirements.txt pyinstaller
 pyinstaller instalador/iik.spec --noconfirm   # → dist/iik/ (Windows) o dist/iik.app (Mac)
 iscc /DVersion=0.1.0 instalador\iik.iss        # Windows, con Inno Setup 6 → dist/iik-0.1.0-windows-instalador.exe
+python instalador/arreglar_mac.py dist/iik.app  # Mac: PROJ de pyproj y rasterio por separado
 bash instalador/hacer_dmg.sh 0.1.0             # Mac → dist/iik-0.1.0-mac-apple-silicon.dmg
 ```
 

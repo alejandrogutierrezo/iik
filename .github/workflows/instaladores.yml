@@ -121,6 +121,11 @@ jobs:
       - name: Empaquetar con PyInstaller
         run: pyinstaller instalador/iik.spec --noconfirm
 
+      - name: Corregir bibliotecas de PROJ y firmar
+        run: |
+          python instalador/arreglar_mac.py dist/iik.app
+          codesign --force --deep --sign - dist/iik.app
+
       - name: Revisar el paquete (importaciones y datos)
         run: dist/iik.app/Contents/MacOS/iik --verificar
 
